@@ -1,228 +1,114 @@
 #!/bin/bash
 
-# GCP Cloud Run V2Ray(VLESS/Trojan) Deployment
-
 set -euo pipefail
 
-# ------------------------------------------------------------------------------
-# 1. GLOBAL VARIABLES & STYLES
-# ------------------------------------------------------------------------------
-
-# Colors
+# Enhanced Colors
 RED='\033[0;31m'
 GREEN='\033[1;32m'
 YELLOW='\033[1;33m'
-ORANGE='\033[0;33m' # Header Color
 BLUE='\033[1;34m'
+ORANGE='\033[0;33m'
 CYAN='\033[1;36m'
 WHITE='\033[1;37m'
 BOLD='\033[1m'
-NC='\033[0m' # No Color
+UNDERLINE='\033[4m'
+BG_BLUE='\033[44m'
+NC='\033[0m'
 
-# Global Configuration Variables (Defaults)
-PROTOCOL=""
-UUID=""
-TROJAN_PASSWORD="ahlflk"
-REGION="us-central1"
-CPU="2"
-MEMORY="2Gi"
-SERVICE_NAME="gcp-ahlflk"
-HOST_DOMAIN="m.googleapis.com"
-TELEGRAM_DESTINATION="none"
-
-# Protocol Specific Defaults
+# Global Variables For Selected Protocol and Necessary Configs
+PROTOCOL="Vless"
 VLESS_PATH="/ahlflk"
-TROJAN_PATH="/ahlflk"
+TROJAN_PATH="ahlflk"
 VLESS_GRPC_SERVICE_NAME="ahlflk"
+TROJAN_PASSWORD="ahlflk"
 
-# Telegram Variables (will be set during selection)
-TELEGRAM_BOT_TOKEN=""
-TELEGRAM_CHANNEL_ID=""
-TELEGRAM_CHAT_ID=""
-TELEGRAM_GROUP_ID=""
-
-# ------------------------------------------------------------------------------
-# 2. UTILITY FUNCTIONS (LOGGING, UI, VALIDATION)
-# ------------------------------------------------------------------------------
-
-# Emoji Function
-show_emojis() {
-    # Define Emojis
-    EMOJI_SUCCESS="✅"
-    EMOJI_WARN="⚠️"
-    EMOJI_ERROR="❌"
-    EMOJI_INFO="💡"
-    EMOJI_SELECT="🎯"
-    EMOJI_PROC="⚙️"
-    EMOJI_DEPLOY="🚀"
-    EMOJI_CHECK="📋"
-    EMOJI_CLEAN="🧹"
+# Progress Bar Function For Better UX
+progress_bar() {
+    local duration=${1}
+    local bar_length=20
+    local elapsed=0
+    echo -ne "${CYAN}[${NC}"
+    while [ $elapsed -lt $duration ]; do
+        local progress=$((elapsed * bar_length / duration))
+        local filled=$(printf "#%.0s" $(seq 1 $progress))
+        local empty=$(printf " %.0s" $(seq 1 $((bar_length - progress))))
+        echo -ne "\r${CYAN}[${GREEN}${filled}${CYAN}${empty}${NC}${NC} ] ${elapsed}s/${duration}s"
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    echo -e "\r${GREEN}[${filled}${NC}${NC} ] Complete!${NC}\n"
 }
 
-# Beautiful Header/Banner (New Design: Fully enclosed box, adjusted to title width)
-header() {
-    local title="$1"
-    local border_color="${ORANGE}"
-    local text_color="${YELLOW}"
-    
-    # Calculate title length
-    local title_length=${#title}
-    local padding=4 # Space on both sides: " | <space> TITLE <space> | "
-    local total_width=$((title_length + padding))
-    
-    # Create top/bottom border line (using Unicode box drawing characters)
-    # The length of the line part inside the corners is total_width - 2
-    local top_bottom_fill=$(printf '━%.0s' $(seq 1 $((total_width - 2))))
-    local top_bottom="${border_color}┏${top_bottom_fill}┓${NC}"
-    local bottom_line="${border_color}┗${top_bottom_fill}┛${NC}"
-    
-    # Create title line
-    # "┃" + <space> + title + <space> + "┃"
-    local title_line="${border_color}┃${NC} ${text_color}${BOLD}${title}${NC} ${border_color}┃${NC}"
-    
-    echo -e "${top_bottom}"
-    echo -e "${title_line}"
-    echo -e "${bottom_line}"
-}
-
-# Simple Logs with Emoji
 log() {
-    echo -e "${GREEN}${BOLD}${EMOJI_SUCCESS} [LOG]${NC} ${WHITE}$1${NC}"
+    echo -e "${GREEN}✅ [$(date +'%Y-%m-%d %H:%M:%S')]${NC} ${WHITE}$1${NC}"
 }
 
 warn() {
-    echo -e "${YELLOW}${BOLD}${EMOJI_WARN} [WARN]${NC} ${WHITE}$1${NC}"
+    echo -e "${YELLOW}⚠️ [WARNING]${NC} ${WHITE}$1${NC}"
 }
 
 error() {
-    echo -e "${RED}${BOLD}${EMOJI_ERROR} [ERROR]${NC} ${WHITE}$1${NC}"
+    echo -e "${RED}❌ [ERROR]${NC} ${WHITE}$1${NC}"
     exit 1
 }
 
 info() {
-    echo -e "${BLUE}${BOLD}${EMOJI_INFO} [INFO]${NC} ${WHITE}$1${NC}"
+    echo -e "${BLUE}${BOLD}ℹ️  [INFO]${NC} ${WHITE}$1${NC}"
+}
+
+header() {
+    echo -e "${ORANGE}${BOLD}══════════════════════════════════════════${NC}"
+    echo -e "${BG_BLUE}${WHITE}${BOLD} $1 ${NC}"
+    echo -e "${ORANGE}${BOLD}══════════════════════════════════════════${NC}"
 }
 
 selected_info() {
-    echo -e "${GREEN}${BOLD}${EMOJI_SELECT} Selected:${NC} ${CYAN}$1${NC}"
+    echo -e "${GREEN}${BOLD}🎯 Selected: ${CYAN}${UNDERLINE}$1${NC}${NC}"
 }
 
-# Spinner for background processes
-spinner() {
-    local pid=$1
-    local delay=0.1
-    # Using standard ASCII characters to avoid encoding issues
-    local spin='/-\|' 
-    local i=0
-    
-    while kill -0 $pid 2>/dev/null; do
-        local index=$((i % ${#spin}))
-        echo -ne "\r${ORANGE}  [${spin:$index:1}]${NC} ${WHITE}$2...${NC}"
-        sleep $delay
-        i=$((i + 1))
-    done
-    echo -ne "\r${GREEN}  [${EMOJI_SUCCESS}]${NC} ${WHITE}$2... Done!${NC}\n"
-}
-
-# Function to validate UUID format
+# Function to Validate UUID Format
 validate_uuid() {
     local uuid_pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
     if [[ ! $1 =~ $uuid_pattern ]]; then
-        warn "Invalid UUID format. Please ensure it is a valid 32-digit hexadecimal number with 4 hyphens."
+        error "Invalid UUID Format: $1"
         return 1
     fi
     return 0
 }
 
-# Function to validate Telegram IDs (combined for Channel/Group/Chat)
-validate_id() {
-    if [[ ! $1 =~ ^-?[0-9]+$ ]]; then
-        # Changed 'error' to 'warn' and use return 1 to continue the loop
-        warn "Invalid Telegram ID format. Must be a number (e.g., -1001234567890 or 123456789)."
-        return 1
-    fi
-    return 0
-}
-
-# Function to validate Telegram Bot Token
+# Function to Validate Telegram Bot Token (Existing Functions Remain)
 validate_bot_token() {
     local token_pattern='^[0-9]{8,10}:[a-zA-Z0-9_-]{35}$'
     if [[ ! $1 =~ $token_pattern ]]; then
-        warn "Invalid Telegram Bot Token format. Please try again."
+        error "Invalid Telegram Bot Token Format"
         return 1
     fi
     return 0
 }
 
-# ------------------------------------------------------------------------------
-# 3. USER INPUT FUNCTIONS (IN ORDER)
-# ------------------------------------------------------------------------------
-
-# A. Telegram Destination Selection
-select_telegram_destination() {
-    header "📱 Telegram Notification Settings"
-    
-    while true; do
-        echo -e "${CYAN}Select where to send the deployment link:${NC}"
-        echo -e "${BOLD}1.${NC} Don't send to Telegram ${GREEN}[DEFAULT]${NC}"
-        echo -e "${BOLD}2.${NC} Send to Channel Only"
-        echo -e "${BOLD}3.${NC} Send to Group Only"
-        echo -e "${BOLD}4.${NC} Send to Bot Private Message" 
-        echo -e "${BOLD}5.${NC} Send to Both Channel and Bot"
-        echo
-        
-        read -p "Select destination (1): " telegram_choice
-        telegram_choice=${telegram_choice:-1}
-        
-        case $telegram_choice in
-            1) TELEGRAM_DESTINATION="none"; break ;;
-            2) TELEGRAM_DESTINATION="channel"; break ;;
-            3) TELEGRAM_DESTINATION="group"; break ;;
-            4) TELEGRAM_DESTINATION="bot"; break ;;
-            5) TELEGRAM_DESTINATION="both"; break ;;
-            *) echo -e "${RED}Invalid selection. Please enter a number between 1-5.${NC}"; continue ;;
-        esac
-    done
-
-    if [[ "$TELEGRAM_DESTINATION" != "none" ]]; then
-        echo
-        while true; do
-            read -p "Enter Telegram Bot Token: " TELEGRAM_BOT_TOKEN
-            if validate_bot_token "$TELEGRAM_BOT_TOKEN"; then break; else continue; fi
-        done
-        
-        if [[ "$TELEGRAM_DESTINATION" == "channel" || "$TELEGRAM_DESTINATION" == "both" ]]; then
-            while true; do
-                read -p "Enter Telegram Channel ID: " TELEGRAM_CHANNEL_ID
-                if validate_id "$TELEGRAM_CHANNEL_ID"; then break; fi
-            done
-        fi
-        
-        if [[ "$TELEGRAM_DESTINATION" == "bot" || "$TELEGRAM_DESTINATION" == "both" ]]; then
-            while true; do
-                read -p "Enter your Chat ID (for bot private message): " TELEGRAM_CHAT_ID
-                if validate_id "$TELEGRAM_CHAT_ID"; then break; fi
-            done
-        fi
-        
-        if [[ "$TELEGRAM_DESTINATION" == "group" ]]; then
-            while true; do
-                read -p "Enter Telegram Group ID: " TELEGRAM_GROUP_ID
-                if validate_id "$TELEGRAM_GROUP_ID"; then break; fi
-            done
-        fi
-        selected_info "Bot Token: ${TELEGRAM_BOT_TOKEN:0:8}..."
+# Function to Validate Channel/Group ID (Existing Functions Remain)
+validate_channel_id() {
+    if [[ ! $1 =~ ^-?[0-9]+$ ]]; then
+        error "Invalid Channel/Group ID Format"
+        return 1
     fi
-    
-    selected_info "Telegram Destination: $TELEGRAM_DESTINATION"
-    echo
+    return 0
 }
 
-# B. Protocol Selection
+# Function to Validate Chat ID (For Bot Private Messages) (Existing Functions Remain)
+validate_chat_id() {
+    if [[ ! $1 =~ ^-?[0-9]+$ ]]; then
+        error "Invalid Chat ID Format"
+        return 1
+    fi
+    return 0
+}
+
+# --- New Protocol Selection Fuction ---
 select_protocol() {
     header "🌐 V2RAY Protocol Selection"
-    echo -e "${CYAN}Choose your preferred V2Ray protocol for the Cloud Run instance:${NC}"
-    echo -e "${BOLD}1.${NC} VLESS-WS (VLESS + WebSocket + TLS) ${GREEN}[DEFAULT]${NC}" # <-- FIX: Added [DEFAULT] here
+    echo -e "${CYAN}Available Options:${NC}"
+    echo -e "${BOLD}1.${NC} VLESS-WS (VLESS + WebSocket + TLS)"
     echo -e "${BOLD}2.${NC} VLESS-gRPC (VLESS + gRPC + TLS)"
     echo -e "${BOLD}3.${NC} Trojan-WS (Trojan + WebSocket + TLS)"
     echo
@@ -231,20 +117,149 @@ select_protocol() {
         read -p "Select V2Ray Protocol (1): " protocol_choice
         protocol_choice=${protocol_choice:-1}
         case $protocol_choice in
-            1) PROTOCOL="VLESS-WS"; break ;;
-            2) PROTOCOL="VLESS-gRPC"; break ;;
-            3) PROTOCOL="Trojan-WS"; break ;;
-            *) echo -e "${RED}Invalid selection. Please enter a number between 1-3.${NC}" ;;
+            1) 
+                PROTOCOL="VLESS-WS"
+                VLESS_PATH="/ahlflk" # Default Path For VLESS-WS
+                break 
+                ;;
+            2) 
+                PROTOCOL="VLESS-gRPC" 
+                VLESS_GRPC_SERVICE_NAME="ahlflk" # Default ServiceName For VLESS-gRPC
+                break 
+                ;;
+            3) 
+                PROTOCOL="Trojan-WS"
+                TROJAN_PASSWORD="" # Will Be Set in Get_User_Input
+                VLESS_PATH="/ahlflk" # Use /Trojan as Default Path For Trojan-WS
+                break 
+                ;;
+            *) echo -e "${RED}Invalid Selection. Please Enter a Number Between 1-3.${NC}" ;;
         esac
     done
     
     selected_info "Protocol: $PROTOCOL"
     echo
 }
+# ----------------------------------------
 
-# C. Region Selection
+# Enhanced CPU Selection With Default 2 Cores (Option 2) (Existing Functions Remain)
+select_cpu() {
+    header "🖥️  CPU Configuration"
+    echo -e "${CYAN}Available Options:${NC}"
+    echo -e "${BOLD}1.${NC} 1  CPU Core (Lightweight)"
+    echo -e "${BOLD}2.${NC} 2  CPU Cores (Balanced) ${GREEN}[DEFAULT]${NC}"
+    echo -e "${BOLD}3.${NC} 4  CPU Cores (Performance)"
+    echo -e "${BOLD}4.${NC} 8  CPU Cores (High Performance)"
+    echo -e "${BOLD}5.${NC} 16 CPU Cores (Advanced - Requires Dedicated Machine Type)${NC}"
+    echo
+    
+    while true; do
+        read -p "Select CPU Cores (2): " cpu_choice
+        cpu_choice=${cpu_choice:-2}
+        case $cpu_choice in
+            1) CPU="1"; break ;;
+            2) CPU="2"; break ;;
+            3) CPU="4"; break ;;
+            4) CPU="8"; break ;;
+            5) CPU="16"; warn "16 Cores Requires --Machine-Type For Cloud Run v2."; break ;;
+            *) echo -e "${RED}Invalid Selection. Please Enter a Number Between 1-5.${NC}" ;;
+        esac
+    done
+    
+    selected_info "CPU: $CPU Core(s)"
+}
+
+# Enhanced Memory Selection With Default 2Gi (Option 2), NO Recommend (Existing Functions Remain)
+select_memory() {
+    header "💾 Memory Configuration"
+    
+    echo -e "${CYAN}Available Options:${NC}"
+    echo -e "${BOLD}1.${NC} 1Gi"
+    echo -e "${BOLD}2.${NC} 2Gi ${GREEN}[DEFAULT]${NC}"
+    echo -e "${BOLD}3.${NC} 4Gi"
+    echo -e "${BOLD}4.${NC} 8Gi"
+    echo -e "${BOLD}5.${NC} 16Gi"
+    echo -e "${BOLD}6.${NC} 32Gi"
+    echo -e "${BOLD}7.${NC} 64Gi"
+    echo -e "${BOLD}8.${NC} 128Gi${NC}"
+    echo
+    
+    while true; do
+        read -p "Select Memory (2): " memory_choice
+        memory_choice=${memory_choice:-2}
+        case $memory_choice in
+            1) MEMORY="1Gi"; break ;;
+            2) MEMORY="2Gi"; break ;;
+            3) MEMORY="4Gi"; break ;;
+            4) MEMORY="8Gi"; break ;;
+            5) MEMORY="16Gi"; break ;;
+            6) MEMORY="32Gi"; break ;;
+            7) MEMORY="64Gi"; break ;;
+            8) MEMORY="128Gi"; break ;;
+            *) echo -e "${RED}Invalid Selection. Please Enter a Number Between 1-8.${NC}" ;;
+        esac
+    done
+    
+    # Validate Memory Configuration
+    validate_memory_config
+    
+    selected_info "Memory: $MEMORY"
+}
+
+# Validate Memory Configuration Based ON CPU (Enhanced With More Ranges) (Existing Functions Remain)
+validate_memory_config() {
+    local cpu_num=$CPU
+    local memory_num=$(echo $MEMORY | sed 's/[^0-9]*//g' | tr -d ' ')
+    local memory_unit=$(echo $MEMORY | sed 's/[0-9]*//g' | tr -d ' ')
+    
+    # Convert Everything to Mi For Comparison
+    if [[ "$memory_unit" == "Gi" ]]; then
+        memory_num=$((memory_num * 1024))
+    fi
+    
+    local min_memory=0 max_memory=0
+    
+    case $cpu_num in
+        1) 
+            min_memory=512
+            max_memory=2048
+            ;;
+        2) 
+            min_memory=1024
+            max_memory=4096
+            ;;
+        4) 
+            min_memory=2048
+            max_memory=8192
+            ;;
+        8) 
+            min_memory=4096
+            max_memory=16384
+            ;;
+        16) 
+            min_memory=8192
+            max_memory=32768  # Up to 32Gi
+            ;;
+    esac
+    
+    if [[ $memory_num -lt $min_memory ]]; then
+        warn "Memory ($MEMORY) Might Be Too Low For $CPU CPU Core(s). Min: $((min_memory / 1024))Gi"
+        read -p "Continue? (y/n): " confirm
+        if [[ ! $confirm =~ [Yy] ]]; then
+            select_memory
+        fi
+    elif [[ $memory_num -gt $max_memory ]]; then
+        warn "Memory ($MEMORY) Might Be Too High For $CPU CPU Core(s). Max: $((max_memory / 1024))Gi"
+        read -p "Continue? (y/n): " confirm
+        if [[ ! $confirm =~ [Yy] ]]; then
+            select_memory
+        fi
+    fi
+}
+
+# Enhanced Region Selection With Default 1 (us-central1) (Existing Functions Remain)
 select_region() {
-    header "🌍 GCP Region Selection"
+    header "🌍 Region Selection"
     echo -e "${CYAN}Available GCP Regions:${NC}"
     echo -e "${BOLD}1.${NC}  🇺🇸 us-central1 (Council Bluffs, Iowa, North America) ${GREEN}[DEFAULT]${NC}"
     echo -e "${BOLD}2.${NC}  🇺🇸 us-east1 (Moncks Corner, South Carolina, North America)" 
@@ -261,7 +276,7 @@ select_region() {
     echo
     
     while true; do
-        read -p "Select region (1): " region_choice
+        read -p "Select Region (1): " region_choice
         region_choice=${region_choice:-1}
         case $region_choice in
             1) REGION="us-central1"; break ;;
@@ -276,185 +291,259 @@ select_region() {
             10) REGION="asia-east2"; break ;;
             11) REGION="asia-south1"; break ;;
             12) REGION="asia-southeast2"; break ;;
-            *) echo -e "${RED}Invalid selection. Please enter a number between 1-12.${NC}" ;;
+            *) echo -e "${RED}Invalid Selection. Please Enter a Number Between 1-12.${NC}" ;;
         esac
     done
     
     selected_info "Region: $REGION"
-    echo
 }
 
-# D. CPU Configuration
-select_cpu() {
-    header "🖥️  CPU Configuration"
+# Enhanced Telegram Destination Selection With Default 5 (None) (Existing Functions Remain)
+select_telegram_destination() {
+    header "📱 Telegram Destination"
     echo -e "${CYAN}Available Options:${NC}"
-    echo -e "${BOLD}1.${NC} 1  CPU Core (Lightweight traffic)"
-    echo -e "${BOLD}2.${NC} 2  CPU Cores (Balanced) ${GREEN}[DEFAULT]${NC}"
-    echo -e "${BOLD}3.${NC} 4  CPU Cores (Performance)"
-    echo -e "${BOLD}4.${NC} 8  CPU Cores (High Performance)"
-    echo -e "${BOLD}5.${NC} 16 CPU Cores (Extreme Load)" 
+    echo -e "${BOLD}1.${NC} Send To Channel Only"
+    echo -e "${BOLD}2.${NC} Send To Bot Private Message Only" 
+    echo -e "${BOLD}3.${NC} Send To Both Channel and Bot"
+    echo -e "${BOLD}4.${NC} Send To Group Only"
+    echo -e "${BOLD}5.${NC} Don't Send To Telegram ${GREEN}[DEFAULT]${NC}"
     echo
     
     while true; do
-        read -p "Select CPU cores (2): " cpu_choice
-        cpu_choice=${cpu_choice:-2}
-        case $cpu_choice in
-            1) CPU="1"; break ;;
-            2) CPU="2"; break ;;
-            3) CPU="4"; break ;;
-            4) CPU="8"; break ;;
-            5) CPU="16"; break ;;
-            *) echo -e "${RED}Invalid selection. Please enter a number between 1-5.${NC}" ;;
+        read -p "Select Destination (5): " telegram_choice
+        telegram_choice=${telegram_choice:-5}
+        case $telegram_choice in
+            1) 
+                TELEGRAM_DESTINATION="Channel"
+                while true; do
+                    read -p "Enter Telegram Channel ID: " TELEGRAM_CHANNEL_ID
+                    if validate_channel_id "$TELEGRAM_CHANNEL_ID"; then
+                        break
+                    fi
+                done
+                break 
+                ;;
+            2) 
+                TELEGRAM_DESTINATION="Bot"
+                while true; do
+                    read -p "Enter Your Chat ID (For Bot Private Message): " TELEGRAM_CHAT_ID
+                    if validate_chat_id "$TELEGRAM_CHAT_ID"; then
+                        break
+                    fi
+                done
+                break 
+                ;;
+            3) 
+                TELEGRAM_DESTINATION="Both"
+                while true; do
+                    read -p "Enter Telegram Channel ID: " TELEGRAM_CHANNEL_ID
+                    if validate_channel_id "$TELEGRAM_CHANNEL_ID"; then
+                        break
+                    fi
+                done
+                while true; do
+                    read -p "Enter Your Chat ID (For Bot Private Message): " TELEGRAM_CHAT_ID
+                    if validate_chat_id "$TELEGRAM_CHAT_ID"; then
+                        break
+                    fi
+                done
+                break 
+                ;;
+            4) 
+                TELEGRAM_DESTINATION="Group"
+                while true; do
+                    read -p "Enter Telegram Group ID: " TELEGRAM_GROUP_ID
+                    if validate_channel_id "$TELEGRAM_GROUP_ID"; then
+                        break
+                    fi
+                done
+                break 
+                ;;
+            5) 
+                TELEGRAM_DESTINATION="None"
+                break 
+                ;;
+            *) echo -e "${RED}Invalid Selection. Please Enter a Number Between 1-5.${NC}" ;;
         esac
     done
-    
-    selected_info "CPU: $CPU core(s)"
-    echo
+
+    selected_info "Telegram Destination: $TELEGRAM_DESTINATION"
 }
 
-# E. Memory Configuration
-select_memory() {
-    header "💾 Memory Configuration"
+# Enhanced Service Configuration With Menu Options (Updated For Trojan Password)
+get_user_input() {
+    header "⚙️  Service Configuration"
     
+    # ------------------ Service Name ------------------
     echo -e "${CYAN}Available Options:${NC}"
-    echo -e "${BOLD}1.${NC} 512Mi (Minimum requirement)"
-    echo -e "${BOLD}2.${NC} 1Gi (Basic usage)"
-    echo -e "${BOLD}3.${NC} 2Gi (Balanced usage) ${GREEN}[DEFAULT]${NC}"
-    echo -e "${BOLD}4.${NC} 4Gi (Moderate performance)"
-    echo -e "${BOLD}5.${NC} 8Gi (High load/many connections)"
-    echo -e "${BOLD}6.${NC} 16Gi (Advanced/Extreme load)"
-    echo -e "${BOLD}7.${NC} 32Gi (Maximum limit for Cloud Run)"
+    echo -e "${BOLD}1.${NC} Enter Custom Service Name"
+    echo -e "${BOLD}2.${NC} Use Default Service Name (gcp-ahlflk) ${GREEN}[DEFAULT]${NC}"
     echo
     
     while true; do
-        read -p "Select memory (3): " memory_choice
-        memory_choice=${memory_choice:-3}
-        case $memory_choice in
-            1) MEMORY="512Mi"; break ;;
-            2) MEMORY="1Gi"; break ;;
-            3) MEMORY="2Gi"; break ;;
-            4) MEMORY="4Gi"; break ;;
-            5) MEMORY="8Gi"; break ;;
-            6) MEMORY="16Gi"; break ;;
-            7) MEMORY="32Gi"; break ;;
-            *) echo -e "${RED}Invalid selection. Please enter a number between 1-7.${NC}" ;;
+        read -p "Select Service Name Option (2): " service_choice
+        service_choice=${service_choice:-2}
+        case $service_choice in
+            1)
+                while true; do
+                    read -p "Enter Service Name: " SERVICE_NAME
+                    if [[ -n "$SERVICE_NAME" ]]; then
+                        break
+                    else
+                        error "Service Name Cannot Be Empty"
+                    fi
+                done
+                break
+                ;;
+            2)
+                SERVICE_NAME="gcp-ahlflk"
+                break
+                ;;
+            *) echo -e "${RED}Invalid Selection. Please Enter 1 or 2.${NC}" ;;
         esac
     done
-    
-    selected_info "Memory: $MEMORY"
-    echo
-}
-
-# F. Service Name Configuration
-select_service_name() {
-    header "${EMOJI_PROC} Service Name Configuration"
-    
-    echo -e "${CYAN}Deployment Service Name (Default: gcp-ahlflk):${NC}"
-    
-    read -p "Enter custom name or press Enter to use default: " custom_name
-    SERVICE_NAME=${custom_name:-$SERVICE_NAME}
-    
-    if [[ -z "$SERVICE_NAME" ]]; then
-        warn "Service name cannot be empty. Using default: gcp-ahlflk."
-        SERVICE_NAME="gcp-ahlflk"
-    fi
     
     selected_info "Service Name: $SERVICE_NAME"
     echo
-}
-
-# G. Host Domain Configuration
-select_host_domain() {
-    header "🌐 Host Domain Configuration"
     
-    echo -e "${CYAN}SNI/Host Domain (Default: m.googleapis.com):${NC}"
-    
-    read -p "Enter custom domain or press Enter to use default: " custom_domain
-    HOST_DOMAIN=${custom_domain:-$HOST_DOMAIN}
-    
-    if [[ -z "$HOST_DOMAIN" ]]; then
-        warn "Host Domain cannot be empty. Using default: m.googleapis.com."
-        HOST_DOMAIN="m.googleapis.com"
-    fi
-    
-    selected_info "Host Domain: $HOST_DOMAIN"
-    echo
-}
-
-# H. UUID/Password Configuration
-select_uuid_password() {
-    header "🔑 UUID / Password Configuration"
-    
+    # ------------------ UUID/Password ------------------
     if [[ "$PROTOCOL" == "Trojan-WS" ]]; then
-        selected_info "Protocol is Trojan-WS, Password default: ${TROJAN_PASSWORD}"
+        # Trojan Password
+        echo -e "${CYAN}Trojan Password Options:${NC}"
+        echo -e "${BOLD}1.${NC} Enter Custom Password"
+        echo -e "${BOLD}2.${NC} Use Default Password (d8961725-d9c0-4828-86d1-4191d4e13d90) ${GREEN}[DEFAULT]${NC}"
         echo
-        echo -e "${CYAN}Trojan Password (Default: ahlflk):${NC}"
-        read -p "Enter custom password or press Enter to use default: " custom_pw
-        TROJAN_PASSWORD=${custom_pw:-$TROJAN_PASSWORD}
-        selected_info "Trojan Password: ${TROJAN_PASSWORD}"
-        
-    else
-        local default_uuid="3675119c-14fc-46a4-b5f3-9a2c91a7d802"
         
         while true; do
-            echo -e "${CYAN}UUID Options:${NC}"
-            echo -e "${BOLD}1.${NC} Use Default UUID (3675...802) ${GREEN}[DEFAULT]${NC}"
-            echo -e "${BOLD}2.${NC} Generate New UUID"
-            echo -e "${CYAN}You can also paste a custom UUID directly, or press Enter for default.${NC}"
-            echo
-
-            read -p "Enter 1, 2, or Paste Custom UUID: " uuid_input
-            uuid_input=${uuid_input:-1}
-
-            if [[ "$uuid_input" == "1" ]]; then
-                UUID="$default_uuid"
-                log "Using Default UUID."
+            read -p "Select Password Option (2): " trojan_pw_choice
+            trojan_pw_choice=${trojan_pw_choice:-2}
+            case $trojan_pw_choice in
+                1)
+                    while true; do
+                        read -p "Enter Custom Trojan Password: " TROJAN_PASSWORD
+                        if [[ -n "$TROJAN_PASSWORD" ]]; then
+                            log "Using Custom Trojan Password"
+                            break
+                        fi
+                    done
+                    break
+                    ;;
+                2)
+                    TROJAN_PASSWORD="d8961725-d9c0-4828-86d1-4191d4e13d90"
+                    log "Using Default Trojan Password"
+                    break
+                    ;;
+                *) echo -e "${RED}Invalid Selection. Please Enter 1 or 2.${NC}" ;;
+            esac
+        done
+        selected_info "Trojan Password: ${TROJAN_PASSWORD:0:8}..."
+    else
+        # VLESS UUID (Try UUID Gen If Available)
+        echo -e "${CYAN}UUID Options:${NC}"
+        echo -e "${BOLD}1.${NC} Generate New UUID"
+        echo -e "${BOLD}2.${NC} Use Default UUID (3675119c-14fc-46a4-b5f3-9a2c91a7d802) ${GREEN}[DEFAULT]${NC}"
+        echo -e "${BOLD}3.${NC} Enter Custom UUID"
+        echo
+        
+        while true; do
+            read -p "Select UUID Option (2): " uuid_choice
+            uuid_choice=${uuid_choice:-2}
+            case $uuid_choice in
+                1)
+                    if command -v uuidgen &> /dev/null; then
+                        UUID=$(uuidgen)
+                    else
+                        UUID=$(cat /proc/sys/kernel/random/uuid)
+                    fi
+                    echo -e "${GREEN}Generated UUID: $UUID${NC}"
+                    break
+                    ;;
+                2)
+                    UUID="3675119c-14fc-46a4-b5f3-9a2c91a7d802"
+                    echo -e "${GREEN}Using Default UUID: $UUID${NC}"
+                    break
+                    ;;
+                3)
+                    while true; do
+                        read -p "Enter Custom UUID [Default: 3675119c-14fc-46a4-b5f3-9a2c91a7d802]: " UUID
+                        UUID=${UUID:-"3675119c-14fc-46a4-b5f3-9a2c91a7d802"}
+                        if validate_uuid "$UUID"; then
+                            echo -e "${GREEN}Using Custom UUID: $UUID${NC}"
+                            break
+                        fi
+                    done
+                    break
+                    ;;
+                *) echo -e "${RED}Invalid Selection. Please Enter 1, 2 or 3.${NC}" ;;
+            esac
+        done
+        selected_info "UUID: $UUID"
+    fi
+    echo
+    
+    # ------------------ Telegram Bot Token ------------------
+    if [[ "$TELEGRAM_DESTINATION" != "None" ]]; then
+        echo -e "${CYAN}Bot Token Options:${NC}"
+        echo -e "${BOLD}1.${NC} Enter Bot Token ${GREEN}[REQUIRED]${NC}"
+        echo
+        
+        while true; do
+            read -p "Enter Telegram Bot Token: " TELEGRAM_BOT_TOKEN
+            if validate_bot_token "$TELEGRAM_BOT_TOKEN"; then
                 break
-            elif [[ "$uuid_input" == "2" ]]; then
-                if command -v uuidgen &> /dev/null; then
-                    UUID=$(uuidgen)
-                else
-                    UUID=$(cat /proc/sys/kernel/random/uuid)
-                fi
-                log "Generated New UUID: $UUID"
-                break
-            elif validate_uuid "$uuid_input"; then
-                # Custom UUID validation successful
-                UUID="$uuid_input"
-                log "Using Custom UUID: $UUID"
-                break
-            else
-                echo -e "${RED}Invalid input. Please enter 1, 2, or a valid custom UUID.${NC}" 
             fi
         done
         
-        selected_info "UUID: $UUID"
-        
-        # VLESS-gRPC ServiceName
-        if [[ "$PROTOCOL" == "VLESS-gRPC" ]]; then
-            echo
-            echo -e "${CYAN}VLESS-gRPC ServiceName (Default: ahlflk):${NC}"
-            read -p "Enter custom ServiceName or press Enter to use default: " custom_service_name
-            VLESS_GRPC_SERVICE_NAME=${custom_service_name:-$VLESS_GRPC_SERVICE_NAME}
-            selected_info "gRPC ServiceName: $VLESS_GRPC_SERVICE_NAME"
-        fi
+        selected_info "Bot Token: ${TELEGRAM_BOT_TOKEN:0:8}..."
     fi
     echo
+    
+    # ------------------ Host Domain ------------------
+    echo -e "${CYAN}Host Domain Options:${NC}"
+    echo -e "${BOLD}1.${NC} Use Default (m.googleapis.com) ${GREEN}[DEFAULT]${NC}"
+    echo -e "${BOLD}2.${NC} Enter Custom Host Domain"
+    echo
+    
+    while true; do
+        read -p "Select Host Domain Option (1): " host_choice
+        host_choice=${host_choice:-1}
+        case $host_choice in
+            1)
+                HOST_DOMAIN="m.googleapis.com"
+                break
+                ;;
+            2)
+                read -p "Enter Host Domain: " HOST_DOMAIN
+                HOST_DOMAIN=${HOST_DOMAIN:-"m.googleapis.com"}
+                break
+                ;;
+            *) echo -e "${RED}Invalid Selection. Please Enter 1 or 2.${NC}" ;;
+        esac
+    done
+    
+    selected_info "Host Domain: $HOST_DOMAIN"
+
+    # ------------------ VLESS-gRPC ServiceName ------------------
+    if [[ "$PROTOCOL" == "VLESS-gRPC" ]]; then
+        echo
+        read -p "Enter VLESS-gRPC ServiceName [Default: $VLESS_GRPC_SERVICE_NAME]: " custom_service_name
+        VLESS_GRPC_SERVICE_NAME=${custom_service_name:-$VLESS_GRPC_SERVICE_NAME}
+        selected_info "gRPC ServiceName: $VLESS_GRPC_SERVICE_NAME"
+    fi
 }
 
-# I. Summary and Confirmation
+# Display Configuration Summary (Enhanced Formatting) (Updated For Protocol)
 show_config_summary() {
-    header "${EMOJI_CHECK} Configuration Summary"
-    # Project ID moved to top
-    echo -e "${CYAN}${BOLD}Project ID:${NC}    $(gcloud config get-value project)"
+    header "📋 Configuration Summary"
     echo -e "${CYAN}${BOLD}Protocol:${NC}      $PROTOCOL"
+    echo -e "${CYAN}${BOLD}Project ID:${NC}    $(gcloud config get-value project)"
     echo -e "${CYAN}${BOLD}Region:${NC}        $REGION"
     echo -e "${CYAN}${BOLD}Service Name:${NC}  $SERVICE_NAME"
     echo -e "${CYAN}${BOLD}Host Domain:${NC}   $HOST_DOMAIN"
     
     if [[ "$PROTOCOL" == "Trojan-WS" ]]; then
-        echo -e "${CYAN}${BOLD}Password:${NC}      ${TROJAN_PASSWORD}"
-        echo -e "${CYAN}${BOLD}Path:${NC}          $TROJAN_PATH"
+        echo -e "${CYAN}${BOLD}Password:${NC}      ${TROJAN_PASSWORD:0:8}..."
+        echo -e "${CYAN}${BOLD}Path:${NC}          $VLESS_PATH"
     elif [[ "$PROTOCOL" == "VLESS-gRPC" ]]; then
         echo -e "${CYAN}${BOLD}UUID:${NC}          $UUID"
         echo -e "${CYAN}${BOLD}ServiceName:${NC}   $VLESS_GRPC_SERVICE_NAME"
@@ -463,212 +552,326 @@ show_config_summary() {
         echo -e "${CYAN}${BOLD}Path:${NC}          $VLESS_PATH"
     fi
     
-    echo -e "${CYAN}${BOLD}CPU/Memory:${NC}    $CPU core(s) / $MEMORY"
+    echo -e "${CYAN}${BOLD}CPU:${NC}           $CPU Core(s)"
+    echo -e "${CYAN}${BOLD}Memory:${NC}        $MEMORY"
     
-    if [[ "$TELEGRAM_DESTINATION" != "none" ]]; then
-        echo -e "${CYAN}${BOLD}Telegram:${NC}      $TELEGRAM_DESTINATION (Token: ${TELEGRAM_BOT_TOKEN:0:8}...)"
+    if [[ "$TELEGRAM_DESTINATION" != "None" ]]; then
+        echo -e "${CYAN}${BOLD}Bot Token:${NC}     ${TELEGRAM_BOT_TOKEN:0:8}..."
+        echo -e "${CYAN}${BOLD}Destination:${NC}   $TELEGRAM_DESTINATION"
+        if [[ "$TELEGRAM_DESTINATION" == "Channel" || "$TELEGRAM_DESTINATION" == "Both" ]]; then
+            echo -e "${CYAN}${BOLD}Channel ID:${NC}    $TELEGRAM_CHANNEL_ID"
+        fi
+        if [[ "$TELEGRAM_DESTINATION" == "Bot" || "$TELEGRAM_DESTINATION" == "Both" ]]; then
+            echo -e "${CYAN}${BOLD}Chat ID:${NC}       $TELEGRAM_CHAT_ID"
+        fi
+        if [[ "$TELEGRAM_DESTINATION" == "Group" ]]; then
+            echo -e "${CYAN}${BOLD}Group ID:${NC}      $TELEGRAM_GROUP_ID"
+        fi
     else
-        echo -e "${CYAN}${BOLD}Telegram:${NC}      Not configured"
+        echo -e "${CYAN}${BOLD}Telegram:${NC}      Not Configured"
     fi
     echo
     
     while true; do
-        # FIX: Using echo -e and subshell for the prompt to correctly handle color codes
-        read -p "$(echo -e "${ORANGE}${BOLD}Proceed with deployment? (y/n): ${NC}")" confirm
+        read -p "Proceed With Deployment? (y/n): " confirm
         case $confirm in
             [Yy]* ) break;;
             [Nn]* ) 
-                info "Deployment cancelled by user"
+                info "Deployment Cancelled By User"
                 exit 0
                 ;;
-            * ) echo -e "${RED}Please answer yes (y) or no (n).${NC}";;
+            * ) echo -e "${RED}Please Answer yes (y) or no (n).${NC}";;
         esac
     done
 }
 
-
-# ------------------------------------------------------------------------------
-# 4. CORE DEPLOYMENT FUNCTIONS (LOGIC REMAINS THE SAME)
-# ------------------------------------------------------------------------------
-
-# Config File Preparation
+# --- New Configuration Fuction ---
 prepare_config_files() {
-    log "Preparing Xray config file based on $PROTOCOL..."
+    log "Preparing Xray Config Files For $PROTOCOL..."
     
     if [[ ! -f "config.json" ]]; then
-        error "config.json not found in GCP-V2RAY-Cloud-Run directory."
+        error "config.json Not Found in GCP-V2RAY-Cloud-Run Directory."
         return 1
     fi
     
     case $PROTOCOL in
         "VLESS-WS")
+            # Replace UUID and Path for VLESS-WS
             sed -i "s/PLACEHOLDER_UUID/$UUID/g" config.json
             sed -i "s|/vless|$VLESS_PATH|g" config.json
+            log "VLESS-WS Config Prepared With UUID and Path"
             ;;
             
         "VLESS-gRPC")
+            # Replace UUID, Change Protocol to gRPC, and Set ServiceName
+            # 1. Update Inbound Protocol From 'vless' to 'vless' (Same)
+            # 2. Update Transport 'Type' From 'ws' to 'grpc'
+            # 3. Add 'ServiceName' For gRPC
             sed -i "s/PLACEHOLDER_UUID/$UUID/g" config.json
             sed -i "s|\"network\": \"ws\"|\"network\": \"grpc\"|g" config.json
             sed -i "s|\"wsSettings\": { \"path\": \"/vless\" }|\"grpcSettings\": { \"serviceName\": \"$VLESS_GRPC_SERVICE_NAME\" }|g" config.json
+            log "VLESS-gRPC Config Prepared With UUID and ServiceName"
             ;;
             
         "Trojan-WS")
+            # 1. Update Inbound Protocol From 'Vless' to 'Trojan'
+            # 2. Replace Settings 'ID' With 'Password' and 'UUID' With 'TROJAN_PASSWORD'
+            # 3. Update Transport Path For WS
+            
+            # Change Protocol to Trojan
             sed -i 's|"protocol": "vless"|"protocol": "trojan"|g' config.json
+            
+            # Change Settings From VLESS Format to Trojan Format
             sed -i "s|\"clients\": \[ { \"id\": \"PLACEHOLDER_UUID\" } ]|\"users\": \[ { \"password\": \"$TROJAN_PASSWORD\" } ]|g" config.json
-            sed -i "s|\"path\": \"/vless\"|\"path\": \"$TROJAN_PATH\"|g" config.json
+            
+            # Set Transport Path For Trojan-WS
+            sed -i "s|\"path\": \"/vless\"|\"path\": \"$VLESS_PATH\"|g" config.json
+            
+            log "Trojan-WS Config Prepared With Password and Path"
             ;;
             
         *)
-            error "Unknown protocol: $PROTOCOL. Cannot prepare config."
+            error "Unknown protocol: $PROTOCOL. Cannot Prepare config."
             ;;
     esac
 }
+# ----------------------------------------------------
 
-# Share Link Creation (Uses the respective path variable)
+# --- New Share Link Creation Fuction ---
 create_share_link() {
     local service_name="$1"
     local domain="$2"
     local uuid_or_password="$3"
-    local protocol_type="$4"
+    local protocol_type="$4" # VLESS-WS, VLESS-gRPC, TROJAN-WS
     local link=""
-    
-    # URL Encode path/serviceName
-    local path_encoded
-    if [[ "$protocol_type" == "VLESS-gRPC" ]]; then
-        path_encoded=$(echo "$VLESS_GRPC_SERVICE_NAME" | sed 's/\//%2F/g')
-    else
-        path_encoded=$(echo "${VLESS_PATH:-$TROJAN_PATH}" | sed 's/\//%2F/g')
-    fi
-    
-    local host_encoded=$(echo "$HOST_DOMAIN" | sed 's/\./%2E/g')
     
     case $protocol_type in
         "VLESS-WS")
-            link="vless://${uuid_or_password}@${HOST_DOMAIN}:443?path=${path_encoded}&security=tls&encryption=none&host=${domain}&fp=randomized&type=ws&sni=${domain}#${service_name}_VLESS-WS"
+            local path_encoded=$(echo $VLESS_PATH | sed 's/\//%2F/g')
+            link="vless://${UUID_or_Password}@${Host_Domain}:443?path=${Path_Encoded}&security=tls&encryption=none&host=${Cloud_Domain}&fp=randomized&type=ws&sni=${Cloud_Domain}#${Service_Name}_VLESS-WS"
             ;;
             
         "VLESS-gRPC")
-            link="vless://${uuid_or_password}@${HOST_DOMAIN}:443?security=tls&encryption=none&host=${domain}&type=grpc&serviceName=${path_encoded}&sni=${domain}#${service_name}_VLESS-gRPC"
+            local service_name_encoded=$(echo $VLESS_GRPC_SERVICE_NAME | sed 's/\//%2F/g')
+            link="vless://${uuid_or_password}@${Host_Domain}:443?security=tls&encryption=none&host=${Cloud_Domain}&type=grpc&Service_Name=${service_name_encoded}&sni=${Cloud_Domain}#${Service_Name}_VLESS-gRPC"
             ;;
             
         "Trojan-WS")
-            link="trojan://${uuid_or_password}@${HOST_DOMAIN}:443?path=${path_encoded}&security=tls&host=${domain}&type=ws&sni=${domain}#${service_name}_Trojan-WS"
+            local path_encoded=$(echo $VLESS_PATH | sed 's/\//%2F/g')
+            link="trojan://${UUID_or_Password}@${Host_Domain}:443?path=${Path_Encoded}&security=tls&host=${Cloud_Domain}&type=ws&sni=${Cloud_Domain}#${Service_Name}_Trojan-WS"
+            ;;
+            
+        *)
+            link="Error: Unsupported Protocol"
             ;;
     esac
     
     echo "$link"
 }
+# ------------------------------------------
 
-# Telegram Notification Function (Simplified)
+# Validation Functions (Existing Functions Remain)
+validate_prerequisites() {
+    log "Validating Prerequisites..."
+    
+    if ! command -v gcloud &> /dev/null; then
+        error "gcloud CLI is not installed. Please install Google Cloud SDK."
+    fi
+    
+    if ! command -v git &> /dev/null; then
+        error "git is not installed. Please install git."
+    fi
+    
+    local PROJECT_ID=$(gcloud config get-value project)
+    if [[ -z "$PROJECT_ID" || "$PROJECT_ID" == "(unset)" ]]; then
+        error "No project configured. Run: gcloud config set project PROJECT_ID"
+    fi
+}
+
+cleanup() {
+    log "Cleaning Up Temporary Files..."
+    if [[ -d "GCP-V2RAY-Cloud-Run" ]]; then
+        rm -rf GCP-V2RAY-Cloud-Run
+    fi
+    # Clean Up Temporary Cloudbuild.yaml
+    if [[ -f "cloudbuild.yaml" ]]; then
+        rm -f cloudbuild.yaml
+    fi
+}
+
+# Enhanced Send_to_Telegram With Escape For Special Chars (Existing Functions Remain)
 send_to_telegram() {
     local chat_id="$1"
     local message="$2"
-    # Escape special Markdown chars, but specifically keep the [link](url) format
-    message=$(echo "$message" | sed 's/\*/\\*/g; s/_/\\_/g; s/`/\\`/g; s/\[🔗 Xray Link\]([^)]*)/[&](/g; s/\[/\\\[/g; s/\]/\\\]/g')
-    # Re-enable the specific link format
-    message=$(echo "$message" | sed 's/\\\[🔗 Xray Link\\\]/\[🔗 Xray Link\]/g')
+    # Escape Special Markdown Chars
+    message=$(echo "$message" | sed 's/\*/\\*/g; s/_/\\_/g; s/`/\\`/g; s/\[/\\[/g')
+    local response
     
-    curl -s -o /dev/null -w "%{http_code}" -X POST \
+    response=$(curl -s -w "%{http_code}" -X POST \
         -H "Content-Type: application/json" \
-        -d "{\"chat_id\": \"${chat_id}\", \"text\": \"$message\", \"parse_mode\": \"MARKDOWN\", \"disable_web_page_preview\": true}" \
-        https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage
+        -d "{
+            \"chat_id\": \"${chat_id}\",
+            \"text\": \"$message\",
+            \"parse_mode\": \"MARKDOWN\",
+            \"disable_web_page_preview\": true
+        }" \
+        https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage)
+    
+    local http_code="${response: -3}"
+    local content="${response%???}"
+    
+    if [[ "$http_code" == "200" ]]; then
+        return 0
+    else
+        error "Failed to Send to Telegram (HTTP $http_code): $content"
+        return 1
+    fi
 }
 
+# Enhanced Send_Deployment_Notification With Group Support (Existing Functions Remain)
 send_deployment_notification() {
     local message="$1"
+    local success_count=0
     
     case $TELEGRAM_DESTINATION in
-        "channel")
-            send_to_telegram "$TELEGRAM_CHANNEL_ID" "$message" > /dev/null 2>&1
-            log "Notification sent to Telegram Channel."
+        "Channel")
+            log "Sending to Telegram Channel..."
+            if send_to_telegram "$TELEGRAM_CHANNEL_ID" "$message"; then
+                log "✅ Successfully Sent to Telegram Channel"
+                success_count=$((success_count + 1))
+            else
+                error "❌ Failed to Send to Telegram Channel"
+            fi
             ;;
-        "bot")
-            send_to_telegram "$TELEGRAM_CHAT_ID" "$message" > /dev/null 2>&1
-            log "Notification sent to Bot private message."
+            
+        "Bot")
+            log "Sending to Bot Private Message..."
+            if send_to_telegram "$TELEGRAM_CHAT_ID" "$message"; then
+                log "✅ Successfully Sent to Bot Private Message"
+                success_count=$((success_count + 1))
+            else
+                error "❌ Failed to Send to Bot Private Message"
+            fi
             ;;
-        "group")
-            send_to_telegram "$TELEGRAM_GROUP_ID" "$message" > /dev/null 2>&1
-            log "Notification sent to Telegram Group."
+            
+        "Both")
+            log "Sending to Both Channel and Bot..."
+            if send_to_telegram "$TELEGRAM_CHANNEL_ID" "$message"; then
+                success_count=$((success_count + 1))
+            fi
+            if send_to_telegram "$TELEGRAM_CHAT_ID" "$message"; then
+                success_count=$((success_count + 1))
+            fi
             ;;
-        "both")
-            send_to_telegram "$TELEGRAM_CHANNEL_ID" "$message" > /dev/null 2>&1
-            send_to_telegram "$TELEGRAM_CHAT_ID" "$message" > /dev/null 2>&1
-            log "Notification sent to both Channel and Bot."
+            
+        "Group")
+            log "Sending to Telegram Group..."
+            if send_to_telegram "$TELEGRAM_GROUP_ID" "$message"; then
+                log "✅ Successfully Sent to Telegram Group"
+                success_count=$((success_count + 1))
+            else
+                error "❌ Failed to Send to Telegram Group"
+            fi
             ;;
-        "none")
-            log "Skipping Telegram notification."
+            
+        "None")
+            log "Skipping Telegram Notification as Configured"
+            return 0
             ;;
     esac
+    
+    if [[ $success_count -gt 0 ]]; then
+        log "Telegram Notification Completed ($success_count Successful)"
+        return 0
+    else
+        warn "All Telegram Notifications Failed, but Deployment was Successful"
+        return 1
+    fi
 }
 
-# ------------------------------------------------------------------------------
-# 5. MAIN EXECUTION BLOCK
-# ------------------------------------------------------------------------------
-
-# Run user input functions in specified order
-run_user_inputs() {
-    select_telegram_destination
+main() {
+    header "🚀 GCP Cloud Run VLESS/TROJAN Deployment"
+    
+    # Get User Input (Updated to Include Protocol Selection)
     select_protocol
     select_region
     select_cpu
     select_memory
-    select_service_name
-    select_host_domain
-    select_uuid_password
+    select_telegram_destination
+    get_user_input
     show_config_summary
-}
-
-# Core deployment logic
-deploy_service() {
-    local PROJECT_ID=$(gcloud config get-value project)
     
-    log "${EMOJI_DEPLOY} Starting Cloud Run deployment for $PROTOCOL..."
+    PROJECT_ID=$(gcloud config get-value project)
     
-    # Validation
-    if ! command -v gcloud &> /dev/null; then error "${EMOJI_ERROR} gcloud CLI is not installed. Please install Google Cloud SDK."; fi
-    if ! command -v git &> /dev/null; then error "${EMOJI_ERROR} git is not installed. Please install git."; fi
-    if [[ -z "$PROJECT_ID" || "$PROJECT_ID" == "(unset)" ]]; then error "${EMOJI_ERROR} No project configured. Run: gcloud config set project PROJECT_ID"; fi
+    log "Starting Cloud Run Deployment..."
+    log "Protocol: $PROTOCOL | Project: $PROJECT_ID | Region: $REGION | Service: $SERVICE_NAME | CPU: $CPU | Memory: $MEMORY"
     
-    # 1. Enable APIs (Quiet)
-    local enable_apis_pid
-    (
-        gcloud services enable cloudbuild.googleapis.com run.googleapis.com iam.googleapis.com --quiet > /dev/null 2>&1
-    ) &
-    enable_apis_pid=$!
-    spinner $enable_apis_pid "Enabling required GCP APIs"
-    wait $enable_apis_pid || warn "${EMOJI_WARN} Failed to enable some APIs (may already be enabled)."
+    validate_prerequisites
     
-    # 2. Cleanup and Clone (Quiet)
-    rm -rf GCP-V2RAY-Cloud-Run || true
-    local clone_pid
-    (
-        # Assuming the user has a repository with Dockerfile and config.json ready.
-        # If the original repository is used, we clone that.
-        git clone https://github.com/ahlflk/GCP-V2RAY-Cloud-Run.git GCP-V2RAY-Cloud-Run > /dev/null 2>&1
-    ) &
-    clone_pid=$!
-    spinner $clone_pid "Cloning repository"
-    wait $clone_pid
+    # Set Trap For Cleanup
+    trap cleanup EXIT
     
-    if [[ ! -d "GCP-V2RAY-Cloud-Run" ]]; then error "${EMOJI_ERROR} GCP-V2RAY-Cloud-Run directory not found (cloning failed or directory missing)."; fi
+    log "Enabling Required APIs..."
+    progress_bar 3
+    gcloud services enable \
+        cloudbuild.googleapis.com \
+        run.googleapis.com \
+        iam.googleapis.com \
+        --quiet
+    
+    # Clean Up Any Existing Directory
+    cleanup
+    
+    log "Cloning Repository..."
+    progress_bar 5
+    if ! git clone https://github.com/ahlflk/GCP-V2RAY-Cloud-Run.git; then
+        warn "Failed to Clone Repository - Using Local Files if Available"
+    fi
+    
+    if [[ ! -d "GCP-V2RAY-Cloud-Run" ]]; then
+        error "GCP-V2RAY-Cloud-Run Directory Not Found. Please Create it With Dockerfile and config.json."
+    fi
     
     cd GCP-V2RAY-Cloud-Run
     
-    # 3. Prepare Config
+    # --- NEW: Prepare Config Based on Selected Protocol ---
     prepare_config_files
+    # ----------------------------------------------------
     
-    # 4. Build Image (Quiet)
-    log "Building container image (quiet mode)..."
-    local build_pid
-    (
-        gcloud builds submit --tag gcr.io/${PROJECT_ID}/gcp-v2ray-image . --quiet > /dev/null 2>&1
-    ) &
-    build_pid=$!
-    spinner $build_pid "Building and pushing container image"
-    wait $build_pid || error "${EMOJI_ERROR} Build failed. Check the Dockerfile or repository for issues."
+    # Quiet The Dockerfile: Add -q to unzip, -qq to apt-get, etc. to Suppress Verbose Output
+    if [[ -f "Dockerfile" ]]; then
+        sed -i 's/unzip Xray-linux-64.zip/unzip -q Xray-linux-64.zip/g' Dockerfile
+        sed -i 's/apt-get update -y/apt-get update -qq -y/g' Dockerfile
+        sed -i 's/apt-get install -y/apt-get install -qq -y/g' Dockerfile
+        log "Quietened Dockerfile (unzip -q and apt -qq added to reduce logs)"
+    fi
     
-    # 5. Deploy Service (Quiet)
+    # Create Temporary cloudbuild.yaml to Disable Colors and Reduce Verbosity
+    cat > cloudbuild.yaml << EOF
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', 'gcr.io/$PROJECT_ID/gcp-v2ray-image', '.']
+  env:
+  - 'NO_COLOR=1'
+  - 'DOCKER_BUILDKIT=1'  # Use BuildKit for quieter progress
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'gcr.io/$PROJECT_ID/gcp-v2ray-image']
+  env:
+  - 'NO_COLOR=1'
+images:
+- 'gcr.io/$PROJECT_ID/gcp-v2ray-image'
+EOF
+    log "Created cloudbuild.yaml For Clean, Quiet Build Logs"
+    
+    log "Building Container Image (Quiet Mode)..."
+    progress_bar 10
+    if ! gcloud builds submit --config cloudbuild.yaml --quiet > /dev/null 2>&1; then
+        error "Build Failed. Check Dockerfile For Issues With geo Files Download."
+    fi
+    
     log "Deploying to Cloud Run..."
+    progress_bar 8
+    # For 16 CPU, Add Machine-Type if Needed (Simplified)
     local deploy_cmd="gcloud run deploy ${SERVICE_NAME} \
         --image gcr.io/${PROJECT_ID}/gcp-v2ray-image \
         --platform managed \
@@ -677,24 +880,24 @@ deploy_service() {
         --cpu ${CPU} \
         --memory ${MEMORY} \
         --quiet"
-
-    local deploy_pid
-    (
-        eval "$deploy_cmd" > /dev/null 2>&1
-    ) &
-    deploy_pid=$!
-    spinner $deploy_pid "Deploying service to Cloud Run"
-    wait $deploy_pid || error "${EMOJI_ERROR} Deployment failed. Check Cloud Run logs for details."
+    if [[ $CPU == "16" ]]; then
+        deploy_cmd="$deploy_cmd --machine-type e2-standard-16"  # Example For Dedicated
+    fi
+    if ! eval "$deploy_cmd"; then
+        error "Deployment Failed"
+        exit 1
+    fi
     
-    # 6. Get URL and create Link
+    # Get The Service URL
     SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} \
         --region ${REGION} \
         --format 'value(status.url)' \
         --quiet)
     
-    DOMAIN=$(echo "$SERVICE_URL" | sed 's|https://||')
+    DOMAIN=$(echo $SERVICE_URL | sed 's|https://||')
     
-    local link_user_id
+    # --- NEW: Create Share Link Based ON Selected Protocol ---
+    local link_user_id=""
     if [[ "$PROTOCOL" == "Trojan-WS" ]]; then
         link_user_id="$TROJAN_PASSWORD"
     else
@@ -702,61 +905,62 @@ deploy_service() {
     fi
     
     SHARE_LINK=$(create_share_link "$SERVICE_NAME" "$DOMAIN" "$link_user_id" "$PROTOCOL")
+    # ----------------------------------------------------
     
-    # 7. Final Output & Notification
-    
-    # Telegram Message with Markdown Link Format
-    MESSAGE="*${EMOJI_DEPLOY} Cloud Run ${PROTOCOL} Deploy → Successful ${EMOJI_SUCCESS}*
+    # Create Telegram Message (Enhanced)
+    MESSAGE="*🚀 Cloud Run ${PROTOCOL} Deploy → Successful ✅*
 ━━━━━━━━━━━━━━━━━━━━
 *Project:* \`${PROJECT_ID}\`
 *Service:* \`${SERVICE_NAME}\`
 *Region:* \`${REGION}\`
+*CPU:* \`${CPU} Core(s)\`
+*Memory:* \`${MEMORY}\`
 *URL:* \`${SERVICE_URL}\`
 
-[🔗 Xray Link](${SHARE_LINK})
-
+\`\`\`
+${SHARE_LINK}
+\`\`\`
 ━━━━━━━━━━━━━━━━━━━━
-*Usage:* Click the link above to copy and import to your V2Ray/Xray client."
+*Usage:* Copy The Link and Import to Your V2Ray/Xray Client.
+"
 
-    CONSOLE_MESSAGE="🚀 Cloud Run ${PROTOCOL} Deployment Successful! ${EMOJI_SUCCESS}
+    # Create Console Message
+    CONSOLE_MESSAGE="🚀 Cloud Run ${PROTOCOL} Deploy Success ✅
 ━━━━━━━━━━━━━━━━━━━━
 Project: ${PROJECT_ID}
 Service: ${SERVICE_NAME}
 Region: ${REGION}
+CPU: ${CPU} core(s)
+Memory: ${MEMORY}
 URL: ${SERVICE_URL}
 
 ${SHARE_LINK}
 
-Usage: Copy the above link and import to your V2Ray/Xray client.
+Usage: Copy The Above Link and Import to Your V2Ray/Xray Client.
 ━━━━━━━━━━━━━━━━━━━━"
     
-    # Save to file
+    # Save to File
     echo "$CONSOLE_MESSAGE" > deployment-info.txt
-    log "Deployment info saved to deployment-info.txt"
+    log "Deployment Info Saved to Deployment-info.txt"
     
-    # Display locally
+    # Display Locally
     echo
-    header "🎉 DEPLOYMENT COMPLETED! 🎉"
+    info "=== Deployment Information ==="
     echo "$CONSOLE_MESSAGE"
     echo
     
-    # Send to Telegram
-    send_deployment_notification "$MESSAGE"
-    
-    log "GCP Cloud Run $PROTOCOL Service is now active and ready! ${EMOJI_SUCCESS}"
-}
-
-# Clean up temporary directory
-cleanup() {
-    log "${EMOJI_CLEAN} Cleaning up temporary files..."
-    if [[ -d "GCP-V2RAY-Cloud-Run" ]]; then
-        cd .. || true
-        rm -rf GCP-V2RAY-Cloud-Run
+    # Send to Telegram Based on User Selection
+    if [[ "$TELEGRAM_DESTINATION" != "None" ]]; then
+        log "Sending Deployment info to Telegram..."
+        send_deployment_notification "$MESSAGE"
+    else
+        log "Skipping Telegram Notification as per User Selection"
     fi
+    
+    log "Deployment Completed Successfully! 🎉"
+    log "Service URL: $SERVICE_URL"
+    log "Configuration Saved to: Deployment-info.txt"
 }
 
-# --- Main Flow ---
-show_emojis # Initialize Emojis
-trap cleanup EXIT
-run_user_inputs
-deploy_service
+# Run main function
+main "$@"
