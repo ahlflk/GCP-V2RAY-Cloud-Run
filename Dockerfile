@@ -1,6 +1,6 @@
 FROM alpine:latest
 
-RUN apk add --no-cache wget unzip
+RUN apk add --no-cache wget unzip jq
 
 RUN wget https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip && \
     unzip -q Xray-linux-64.zip && \
