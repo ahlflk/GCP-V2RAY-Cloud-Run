@@ -429,10 +429,10 @@ select_uuid_password() {
         done
         
         selected_info "UUID: $UUID"
+        echo
         
         # VLESS-gRPC ServiceName
         if [[ "$PROTOCOL" == "VLESS-gRPC" ]]; then
-            echo
             echo -e "${CYAN}VLESS-gRPC ServiceName (Default: ahlflk):${NC}"
             read -p "Enter custom ServiceName or press Enter to use default: " custom_service_name
             VLESS_GRPC_SERVICE_NAME=${custom_service_name:-$VLESS_GRPC_SERVICE_NAME}
@@ -520,7 +520,7 @@ prepare_config_files() {
         "Trojan-WS")
             jq --arg pw "$TROJAN_PASSWORD" --arg path "$TROJAN_PATH" \
             '.inbounds[0].protocol = "trojan" |
-             .inbounds[0].settings |= (del(.clients) | .users = [{password: $pw}]) |
+             .inbounds[0].settings |= (del(.clients) | del(.decryption) | .users = [{password: $pw}]) |
              .inbounds[0].streamSettings.wsSettings.path = $path' config.json > temp.json && \
             mv temp.json config.json
             ;;
@@ -529,11 +529,6 @@ prepare_config_files() {
             error "Unknown protocol: $PROTOCOL. Cannot prepare config."
             ;;
     esac
-    
-    # Debug: Print config after changes (remove after testing)
-    echo "=== DEBUG: Updated config.json ==="
-    cat config.json
-    echo "=== END DEBUG ==="
 }
 
 # Share Link Creation (Uses the respective path variable)
@@ -552,17 +547,19 @@ create_share_link() {
         PATH_ENCODED=$(echo "${VLESS_PATH:-$TROJAN_PATH}" | sed 's/\//%2F/g')
     fi
     
+    local HOST_ENCODED=$(echo "$HOST_DOMAIN" | sed 's/\./%2E/g')
+    
     case $PROTOCOL_TYPE in
         "VLESS-WS")
             LINK="vless://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?path=${PATH_ENCODED}&security=tls&encryption=none&host=${DOMAIN}&fp=randomized&type=ws&sni=${DOMAIN}#${SERVICE_NAME}_VLESS-WS"
             ;;
             
         "VLESS-gRPC")
-            LINK="vless://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?security=tls&encryption=none&host=${DOMAIN}&type=grpc&serviceName=${PATH_ENCODED}&sni=${DOMAIN}#${SERVICE_NAME}_VLESS-gRPC"
+            LINK="vless://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?security=tls&encryption=none&host=${DOMAIN}&fp=randomized&type=grpc&serviceName=${PATH_ENCODED}&sni=${DOMAIN}#${SERVICE_NAME}_VLESS-gRPC"
             ;;
             
         "Trojan-WS")
-            LINK="trojan://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?path=${PATH_ENCODED}&security=tls&host=${DOMAIN}&type=ws&sni=${DOMAIN}#${SERVICE_NAME}_Trojan-WS"
+            LINK="trojan://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?path=${PATH_ENCODED}&security=tls&host=${DOMAIN}&fp=randomized&type=ws&sni=${DOMAIN}#${SERVICE_NAME}_Trojan-WS"
             ;;
     esac
     
