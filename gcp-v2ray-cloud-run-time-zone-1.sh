@@ -1,10 +1,20 @@
 #!/bin/bash
 
 # ==============================================================================
-# GCP Cloud Run V2RAY/XRAY Multi-Protocol Deployment (Time/Date/TZ Removed)
+# GCP Cloud Run V2RAY/XRAY Multi-Protocol Deployment (Fixed: UUID Gen Logic, Asia/Yangon TZ)
 # ==============================================================================
 
-# Time Zone/Date/Time Functions Removed.
+# === Time Zone Function ===
+# Set the time zone globally for the script
+export TZ="Asia/Yangon"
+
+# Helper function to format epoch time to local datetime
+fmt_dt(){ 
+    # Using 'date' command to format the epoch time in the set TZ (Asia/Yangon)
+    date -d @"$1" "+%d.%m.%Y %I:%M %p"; 
+}
+# ==========================
+
 
 set -euo pipefail
 
@@ -46,9 +56,9 @@ TELEGRAM_GROUP_ID=""
 # Project ID holder
 PROJECT_ID=""
 
-# Time Variables (Removed)
-# START_LOCAL=""
-# END_LOCAL="" 
+# Time Variables 
+START_LOCAL=""
+END_LOCAL=""
 
 # Deployment Configuration
 GIT_REPO="https://github.com/ahlflk/GCP-V2RAY-Cloud-Run.git"
@@ -119,14 +129,15 @@ progress_bar() {
     printf "\r${BOLD}${EMOJI_PROC} ${label}... ${NC}[${LIGHT_GREEN}%s${NC}] 100%% Done! (0s)${NC}\n" "$(printf '#%.0s' $(seq 1 $width))"
 }
 
-# Function to calculate and initialize time variables (REMOVED)
-# initialize_time_variables() {
-#     START_EPOCH="$(date +%s)"
-#     END_EPOCH="$(( START_EPOCH + 5*3600 ))" 
-#     START_LOCAL="$(fmt_dt "$START_EPOCH")"
-#     END_LOCAL="$(fmt_dt "$END_EPOCH")"
-#     log "Deployment validity times initialized."
-# }
+# Function to calculate and initialize time variables
+initialize_time_variables() {
+    START_EPOCH="$(date +%s)"
+    # Note: 5 hours is only for display/tracking, Cloud Run service is permanent unless deleted
+    END_EPOCH="$(( START_EPOCH + 5*3600 ))" 
+    START_LOCAL="$(fmt_dt "$START_EPOCH")"
+    END_LOCAL="$(fmt_dt "$END_EPOCH")"
+    log "Deployment validity times initialized (Asia/Yangon Time)."
+}
 
 # Validation Functions
 validate_uuid() {
@@ -161,7 +172,7 @@ validate_bot_token() {
 # 3. USER INPUT FUNCTIONS 
 # ------------------------------------------------------------------------------
 
-# A. Protocol Selection 
+# A. Protocol Selection (NEW - must be first)
 select_protocol() {
     header "⛓️  Protocol Selection"
     echo -e "${CYAN}Choose the tunneling protocol for deployment:${NC}"
@@ -405,7 +416,7 @@ select_host_domain() {
     echo
 }
 
-# H. Key/Password Configuration (UUID Generation Logic Fixed and Cleaned)
+# H. Key/Password Configuration 
 select_key_and_path() {
     header "🔑 Key/Password & Path/Service Configuration"
     
@@ -427,15 +438,17 @@ select_key_and_path() {
                 log "Using Default UUID."
                 break
             elif [[ "$uuid_input" == "2" ]]; then
-                # UUID Generation logic (Warning removed in previous fix)
+                # *** FIXED: UUID Generation without Warning ***
                 local new_uuid=""
                 
                 # 1. Primary: Use uuidgen
                 if command -v uuidgen &> /dev/null; then
                     new_uuid=$(uuidgen)
-                # 2. Fallback: Use kernel's random UUID file (No warning)
+                # 2. Fallback: Use kernel's random UUID file (no warning printed here)
                 elif [ -f "/proc/sys/kernel/random/uuid" ]; then
                     new_uuid=$(cat /proc/sys/kernel/random/uuid)
+                    # The 'warn' command has been removed here:
+                    # warn "'uuidgen' command not found. Using /proc/sys/kernel/random/uuid for generation."
                 fi
 
                 # 3. Validation and Final Assignment
@@ -516,7 +529,9 @@ show_config_summary() {
     printf "${CYAN}${BOLD}%-25s${NC} %s\n" "CPU/Memory:"             "$CPU core(s) / $MEMORY"
     printf "${CYAN}${BOLD}%-25s${NC} %s\n" "Telegram:"             "$TELEGRAM_DESTINATION"
     
-    # Timeframe section removed
+    header "⏳ Deployment Timeframe (Asia/Yangon)"
+    printf "${CYAN}${BOLD}%-25s${NC} %s\n" "Deployment Start:"       "$START_LOCAL"
+    printf "${CYAN}${BOLD}%-25s${NC} %s\n" "Estimated End Time:"     "$END_LOCAL (5 hours)"
     echo
     
     while true; do
@@ -561,6 +576,7 @@ auto_deployment_setup() {
     echo
 }
 
+# FIXED: Now copies template files directly and only clones the repo for Dockerfile.
 clone_and_extract() {
     log "Cloning repository from $GIT_REPO..."
     # Clone the repository to a temporary directory
@@ -636,11 +652,11 @@ create_share_link() {
     local PATH_ENCODED=$(echo "$VLESS_PATH" | sed 's/\//%2F/g')
     
     if [[ "$PROTOCOL" == "VLESS-WS" ]]; then
-        LINK="vless://${UUID}@${HOST_DOMAIN_CLEAN}:443?path=${PATH_ENCODED}&security=tls&encryption=none&host=${DOMAIN}&fp=randomized&type=ws&sni=${DOMAIN}#${SERVICE_NAME}_VLESS-WS"
+        LINK="vless://${UUID}@${HOST_DOMAIN_CLEAN}:443?path=${PATH_ENCODED}&security=tls&encryption=none&host=${DOMAIN}&fp=randomized&type=ws&sni=${DOMAIN}#${SERVICE_NAME}_VLESS-WS_${END_LOCAL}"
     elif [[ "$PROTOCOL" == "VLESS-gRPC" ]]; then
-        LINK="vless://${UUID}@${HOST_DOMAIN_CLEAN}:443?security=tls&encryption=none&type=grpc&serviceName=${GRPC_SERVICE_NAME}&sni=${DOMAIN}&host=${DOMAIN}#${SERVICE_NAME}_VLESS-gRPC"
+        LINK="vless://${UUID}@${HOST_DOMAIN_CLEAN}:443?security=tls&encryption=none&type=grpc&serviceName=${GRPC_SERVICE_NAME}&sni=${DOMAIN}&host=${DOMAIN}#${SERVICE_NAME}_VLESS-gRPC_${END_LOCAL}"
     elif [[ "$PROTOCOL" == "Trojan-WS" ]]; then
-        LINK="trojan://${TROJAN_PASSWORD}@${HOST_DOMAIN_CLEAN}:443?path=${PATH_ENCODED}&security=tls&host=${DOMAIN}&type=ws&sni=${DOMAIN}#${SERVICE_NAME}_Trojan-WS"
+        LINK="trojan://${TROJAN_PASSWORD}@${HOST_DOMAIN_CLEAN}:443?path=${PATH_ENCODED}&security=tls&host=${DOMAIN}&type=ws&sni=${DOMAIN}#${SERVICE_NAME}_Trojan-WS_${END_LOCAL}"
     fi
     
     echo "$LINK"
@@ -719,8 +735,8 @@ deploy_to_cloud_run() {
     selected_info "Service URL: $service_url"
     selected_info "${PROTOCOL} Share Link: $share_link"
 
-    # Telegram Message (Time/Date/TZ information removed)
-    local telegram_message="🚀 *GCP ${PROTOCOL} Deployment Complete!*\n\n📋 *Details:*\n• Protocol: $PROTOCOL\n• Region: $REGION\n• Service: $SERVICE_NAME\n${key_info}\n\n🔗 [${link_name}]($share_link)"
+    # Telegram Message includes Start Time and End Time (as requested)
+    local telegram_message="🚀 *GCP ${PROTOCOL} Deployment Complete (Asia/Yangon)!*\n\n📋 *Details:*\n• Protocol: $PROTOCOL\n• Region: $REGION\n• Service: $SERVICE_NAME\n${key_info}\n• Start Time: $START_LOCAL\n• End Time: $END_LOCAL (5 hours)\n\n🔗 [${link_name}]($share_link)"
     
     send_deployment_notification "$telegram_message"
 }
@@ -729,7 +745,6 @@ create_project_folder() {
     local project_id="$PROJECT_ID"
     local service_url=$(gcloud run services describe $SERVICE_NAME --region $REGION --format='value(status.url)' --quiet 2>/dev/null)
     local share_link=$(create_share_link "$SERVICE_NAME" "$service_url")
-    local current_date_time=$(date) # Use current system time if needed
 
     log "Saving project files and info to folder: $OUTPUT_FOLDER/"
     mkdir -p "$OUTPUT_FOLDER"
@@ -769,7 +784,8 @@ Memory: $MEMORY
 Service URL: $service_url
 Share Link: $share_link
 
-Deployment Timestamp: $current_date_time (Local System Time)
+Deployment Date: $START_LOCAL (Asia/Yangon)
+Estimated End Time: $END_LOCAL (5 hours)
 
 For more details, check GCP Console: https://console.cloud.google.com/run?project=$project_id
 EOF
@@ -784,7 +800,7 @@ EOF
 # ------------------------------------------------------------------------------
 
 show_emojis
-# initialize_time_variables function removed
+initialize_time_variables
 
 run_user_inputs() {
     header "${EMOJI_DEPLOY} GCP Cloud Run V2RAY/XRAY Deployment"

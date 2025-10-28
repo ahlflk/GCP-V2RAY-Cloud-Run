@@ -1,0 +1,31 @@
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "port": 8080,
+      "protocol": "trojan",
+      "settings": {
+        "clients": [
+          {
+            "password": "PLACEHOLDER_PASSWORD"
+          }
+        ],
+        "fallbacks": []
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "PLACEHOLDER_PATH"
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "settings": {}
+    }
+  ]
+}
