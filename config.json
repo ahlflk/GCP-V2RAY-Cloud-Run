@@ -1,0 +1,46 @@
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "port": 8080, // Cloud Run MUST listen on 8080
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "PLACEHOLDER_UUID",
+            "level": 0
+          }
+        ],
+        "decryption": "none",
+        "fallbacks": []
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "tlsSettings": {
+          "allowInsecure": true, // This is okay for Cloud Run's reverse proxy
+          "alpn": ["http/1.1", "h2"],
+          "fingerprint": "randomized",
+          "serverName": "m.googleapis.com" // You can set this as a default SNI
+        },
+        "wsSettings": {
+          "path": "/v2ray-path", // Placeholder for VLESS-WS or TROJAN-WS path
+          "headers": {
+            "Host": "m.googleapis.com"
+          }
+        },
+        "grpcSettings": {
+          "serviceName": "/v2ray-path" // Placeholder for VLESS-gRPC serviceName
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "settings": {}
+    }
+  ]
+}
