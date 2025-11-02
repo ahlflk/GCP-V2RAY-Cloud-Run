@@ -544,15 +544,15 @@ create_share_link() {
     
     case $PROTOCOL_TYPE in
         "VLESS-WS")
-            LINK="vless://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?path=${PATH_ENCODED}&security=tls&encryption=none&host=${DOMAIN}&fp=randomized&type=ws&sni=${DOMAIN}#${SERVICE_NAME}_VLESS-WS_START=${START_LOCAL}_END=${END_LOCAL}"
+            LINK="vless://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?path=${PATH_ENCODED}&security=tls&encryption=none&host=${DOMAIN}&fp=randomized&type=ws&sni=${DOMAIN}#${SERVICE_NAME}_VLESS-WS"
             ;;
             
         "VLESS-gRPC")
-            LINK="vless://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?security=tls&encryption=none&host=${DOMAIN}&fp=randomized&type=grpc&serviceName=${PATH_ENCODED}&sni=${DOMAIN}#${SERVICE_NAME}_VLESS-gRPC_START=${START_LOCAL}_END=${END_LOCAL}"
+            LINK="vless://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?security=tls&encryption=none&host=${DOMAIN}&fp=randomized&type=grpc&serviceName=${PATH_ENCODED}&sni=${DOMAIN}#${SERVICE_NAME}_VLESS-gRPC"
             ;;
             
         "Trojan-WS")
-            LINK="trojan://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?path=${PATH_ENCODED}&security=tls&host=${DOMAIN}&fp=randomized&type=ws&sni=${DOMAIN}#${SERVICE_NAME}_Trojan-WS_START=${START_LOCAL}_END=${END_LOCAL}"
+            LINK="trojan://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?path=${PATH_ENCODED}&security=tls&host=${DOMAIN}&fp=randomized&type=ws&sni=${DOMAIN}#${SERVICE_NAME}_Trojan-WS"
             ;;
     esac
     
