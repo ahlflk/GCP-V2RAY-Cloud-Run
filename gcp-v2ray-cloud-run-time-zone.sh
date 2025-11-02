@@ -41,6 +41,22 @@ TELEGRAM_CHANNEL_ID=""
 TELEGRAM_CHAT_ID=""
 TELEGRAM_GROUP_ID=""
 
+# Time Variables (Initialized later in run_user_inputs)
+START_LOCAL=""
+END_LOCAL=""
+
+# =================== Time Zone Function ===================
+export TZ="Asia/Yangon"
+fmt_dt(){ date -d @"$1" "+%d.%m.%Y %I:%M %p"; }
+
+initialize_time_variables() {
+    START_EPOCH="$(date +%s)"
+    END_EPOCH="$(( START_EPOCH + 5*3600 ))" # 5 hours validity
+    START_LOCAL="$(fmt_dt "$START_EPOCH")"
+    END_LOCAL="$(fmt_dt "$END_EPOCH")"
+}
+# ==========================================================
+
 # ------------------------------------------------------------------------------
 # 2. UTILITY FUNCTIONS (LOGGING, UI, VALIDATION)
 # ------------------------------------------------------------------------------
@@ -429,10 +445,10 @@ select_uuid_password() {
         done
         
         selected_info "UUID: $UUID"
+        echo
         
         # VLESS-gRPC ServiceName
         if [[ "$PROTOCOL" == "VLESS-gRPC" ]]; then
-            echo
             echo -e "${CYAN}VLESS-gRPC ServiceName (Default: ahlflk):${NC}"
             read -p "Enter custom ServiceName or press Enter to use default: " custom_service_name
             VLESS_GRPC_SERVICE_NAME=${custom_service_name:-$VLESS_GRPC_SERVICE_NAME}
@@ -470,6 +486,12 @@ show_config_summary() {
     else
         echo -e "${CYAN}${BOLD}Telegram:${NC}      Not configured"
     fi
+    
+    # FIX: Added Deployment Time to Summary
+    header "⏰ Deployment Time (Asia/Yangon)"
+    echo -e "${CYAN}${BOLD}Start Date:${NC}    $START_LOCAL"
+    echo -e "${CYAN}${BOLD}End Date:${NC}      $END_LOCAL"
+    
     echo
     
     while true; do
@@ -502,20 +524,27 @@ prepare_config_files() {
     
     case $PROTOCOL in
         "VLESS-WS")
-            sed -i "s/PLACEHOLDER_UUID/$UUID/g" config.json
-            sed -i "s|/vless|$VLESS_PATH|g" config.json
+            jq --arg uuid "$UUID" --arg path "$VLESS_PATH" \
+            '.inbounds[0].settings.clients[0].id = $uuid |
+             .inbounds[0].streamSettings.wsSettings.path = $path' config.json > temp.json && \
+            mv temp.json config.json
             ;;
             
         "VLESS-gRPC")
-            sed -i "s/PLACEHOLDER_UUID/$UUID/g" config.json
-            sed -i "s|\"network\": \"ws\"|\"network\": \"grpc\"|g" config.json
-            sed -i "s|\"wsSettings\": { \"path\": \"/vless\" }|\"grpcSettings\": { \"serviceName\": \"$VLESS_GRPC_SERVICE_NAME\" }|g" config.json
+            jq --arg uuid "$UUID" --arg service "$VLESS_GRPC_SERVICE_NAME" \
+            '.inbounds[0].settings.clients[0].id = $uuid |
+             .inbounds[0].streamSettings.network = "grpc" |
+             .inbounds[0].streamSettings.grpcSettings = {serviceName: $service} |
+             del(.inbounds[0].streamSettings.wsSettings)' config.json > temp.json && \
+            mv temp.json config.json
             ;;
             
         "Trojan-WS")
-            sed -i 's|"protocol": "vless"|"protocol": "trojan"|g' config.json
-            sed -i "s|\"clients\": \[ { \"id\": \"PLACEHOLDER_UUID\" } ]|\"users\": \[ { \"password\": \"$TROJAN_PASSWORD\" } ]|g" config.json
-            sed -i "s|\"path\": \"/vless\"|\"path\": \"$TROJAN_PATH\"|g" config.json
+            jq --arg pw "$TROJAN_PASSWORD" --arg path "$TROJAN_PATH" \
+            '.inbounds[0].protocol = "trojan" |
+             .inbounds[0].settings |= (del(.clients) | del(.decryption) | .users = [{password: $pw}]) |
+             .inbounds[0].streamSettings.wsSettings.path = $path' config.json > temp.json && \
+            mv temp.json config.json
             ;;
             
         *)
@@ -609,6 +638,7 @@ send_deployment_notification() {
 run_user_inputs() {
 # Display main header
 header "${EMOJI_DEPLOY} GCP Cloud Run V2Ray(VLESS/Trojan) Deployment"
+    initialize_time_variables # FIX: Initialize time variables first
     select_telegram_destination
     select_protocol
     select_region
@@ -696,14 +726,14 @@ deploy_service() {
     
     DOMAIN=$(echo "$SERVICE_URL" | sed 's|https://||')
     
-    local link_user_id
+    local LINK_USER_ID
     if [[ "$PROTOCOL" == "Trojan-WS" ]]; then
-        link_user_id="$TROJAN_PASSWORD"
+        LINK_USER_ID="$TROJAN_PASSWORD"
     else
-        link_user_id="$UUID"
+        LINK_USER_ID="$UUID"
     fi
     
-    SHARE_LINK=$(create_share_link "$SERVICE_NAME" "$DOMAIN" "$link_user_id" "$PROTOCOL")
+    SHARE_LINK=$(create_share_link "$SERVICE_NAME" "$DOMAIN" "$LINK_USER_ID" "$PROTOCOL")
     
     # 7. Final Output & Notification
     
@@ -714,6 +744,8 @@ deploy_service() {
 *Service:* \`${SERVICE_NAME}\`
 *Region:* \`${REGION}\`
 *URL:* \`${SERVICE_URL}\`
+*Start Date (MMT):* \`${START_LOCAL}\`
+*End Date (MMT):* \`${END_LOCAL}\`
 
 [🔗 Xray Link](${SHARE_LINK})
 
@@ -726,6 +758,8 @@ Project: ${PROJECT_ID}
 Service: ${SERVICE_NAME}
 Region: ${REGION}
 URL: ${SERVICE_URL}
+Start Date (MMT): ${START_LOCAL}
+End Date (MMT): ${END_LOCAL}
 
 ${SHARE_LINK}
 
