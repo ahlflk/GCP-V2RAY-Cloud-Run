@@ -11,7 +11,6 @@ set -euo pipefail
 # Colors
 RED='\033[0;31m'
 GREEN='\033[1;32m'
-LIGHT_GREEN='\033[1;92m'  # Light Green for bar
 YELLOW='\033[1;33m'
 ORANGE='\033[0;33m' # Header Color
 BLUE='\033[1;34m'
@@ -108,48 +107,21 @@ selected_info() {
     echo -e "${GREEN}${BOLD}${EMOJI_SELECT} Selected:${NC} ${CYAN}$1${NC}"
 }
 
-# Progress Bar Function (Replacing Spinner)
-# This function monitors a PID, estimates duration, and shows a bar
-progress_bar_monitor() {
+# Spinner for background processes
+spinner() {
     local pid=$1
-    local message="$2"
-    local width=30
-    local start=$(date +%s)
-    local elapsed=0
-    
-    # Initial status message
-    echo -e "${ORANGE}  [${EMOJI_PROC}]${NC} ${WHITE}$message...${NC}"
-    
-    # Estimation (since we can't truly know the time, we use an arbitrary max duration 15s)
-    local max_duration=15
+    local delay=0.1
+    # Using standard ASCII characters to avoid encoding issues
+    local spin='/-\|' 
+    local i=0
     
     while kill -0 $pid 2>/dev/null; do
-        elapsed=$(( $(date +%s) - start ))
-        
-        # Calculate percent based on elapsed time, capped at 99%
-        local percent=$((elapsed * 100 / max_duration))
-        if [ "$percent" -gt 99 ]; then percent=99; fi
-
-        local num_chars=$((percent * width / 100))
-        local bar=$(printf '#%.0s' $(seq 1 $num_chars))
-        local spaces=$(printf ' %.0s' $(seq 1 $((width - num_chars))))
-        
-        local current_time=$(date +%H:%M:%S)
-        
-        # Display progress bar
-        printf "\r${ORANGE}  [${NC} ${LIGHT_GREEN}%s${NC}${ORANGE}%s${NC} ] %d%% (${current_time})${NC}" "$bar" "$spaces" "$percent"
-        
-        sleep 0.5 # Update every half second
-        
-        # Check if process is running for too long (e.g., build/deploy)
-        if [ "$elapsed" -gt 120 ]; then # 2 minutes
-            warn "Process is running longer than expected (${elapsed}s)."
-            # Continue monitoring, but stop increasing the bar based on max_duration
-        fi
+        local index=$((i % ${#spin}))
+        echo -ne "\r${ORANGE}  [${spin:$index:1}]${NC} ${WHITE}$2...${NC}"
+        sleep $delay
+        i=$((i + 1))
     done
-    
-    # Final persistent line when the process finishes
-    printf "\r${GREEN}  [${EMOJI_SUCCESS}]${NC} ${WHITE}$message... Done!${NC}\n"
+    echo -ne "\r${GREEN}  [${EMOJI_SUCCESS}]${NC} ${WHITE}$2... Done!${NC}\n"
 }
 
 # Function to validate UUID format
@@ -174,7 +146,7 @@ validate_id() {
 
 # Function to validate Telegram Bot Token
 validate_bot_token() {
-    local token_pattern='^[0-9]{8,10}:[a-zA-Z0-Z0-9_-]{35}$'
+    local token_pattern='^[0-9]{8,10}:[a-zA-Z0-9_-]{35}$'
     if [[ ! $1 =~ $token_pattern ]]; then
         warn "Invalid Telegram Bot Token format. Please try again."
         return 1
@@ -250,7 +222,7 @@ select_telegram_destination() {
 select_protocol() {
     header "🌐 V2RAY Protocol Selection"
     echo -e "${CYAN}Choose your preferred V2Ray protocol for the Cloud Run instance:${NC}"
-    echo -e "${BOLD}1.${NC} VLESS-WS (VLESS + WebSocket + TLS) ${GREEN}[DEFAULT]${NC}" 
+    echo -e "${BOLD}1.${NC} VLESS-WS (VLESS + WebSocket + TLS) ${GREEN}[DEFAULT]${NC}" # <-- FIX: Added [DEFAULT] here
     echo -e "${BOLD}2.${NC} VLESS-gRPC (VLESS + gRPC + TLS)"
     echo -e "${BOLD}3.${NC} Trojan-WS (Trojan + WebSocket + TLS)"
     echo
@@ -536,14 +508,14 @@ prepare_config_files() {
             
         "VLESS-gRPC")
             sed -i "s/PLACEHOLDER_UUID/$UUID/g" config.json
-            sed -i 's|"network": "ws"|"network": "grpc"|g' config.json
+            sed -i "s|\"network\": \"ws\"|\"network\": \"grpc\"|g" config.json
             sed -i "s|\"wsSettings\": { \"path\": \"/vless\" }|\"grpcSettings\": { \"serviceName\": \"$VLESS_GRPC_SERVICE_NAME\" }|g" config.json
             ;;
             
         "Trojan-WS")
             sed -i 's|"protocol": "vless"|"protocol": "trojan"|g' config.json
             sed -i "s|\"clients\": \[ { \"id\": \"PLACEHOLDER_UUID\" } ]|\"users\": \[ { \"password\": \"$TROJAN_PASSWORD\" } ]|g" config.json
-            sed -i "s|\"path\": \"/vless\"|\"path\": \"$TROJAN_PATH\"|g' config.json
+            sed -i "s|\"path\": \"/vless\"|\"path\": \"$TROJAN_PATH\"|g" config.json
             ;;
             
         *)
@@ -665,7 +637,7 @@ deploy_service() {
         gcloud services enable cloudbuild.googleapis.com run.googleapis.com iam.googleapis.com --quiet > /dev/null 2>&1
     ) &
     enable_apis_pid=$!
-    progress_bar_monitor $enable_apis_pid "Enabling required GCP APIs"
+    spinner $enable_apis_pid "Enabling required GCP APIs"
     wait $enable_apis_pid || warn "${EMOJI_WARN} Failed to enable some APIs (may already be enabled)."
     
     # 2. Cleanup and Clone (Quiet)
@@ -677,7 +649,7 @@ deploy_service() {
         git clone https://github.com/ahlflk/GCP-V2RAY-Cloud-Run.git GCP-V2RAY-Cloud-Run > /dev/null 2>&1
     ) &
     clone_pid=$!
-    progress_bar_monitor $clone_pid "Cloning repository"
+    spinner $clone_pid "Cloning repository"
     wait $clone_pid
     
     if [[ ! -d "GCP-V2RAY-Cloud-Run" ]]; then error "${EMOJI_ERROR} GCP-V2RAY-Cloud-Run directory not found (cloning failed or directory missing)."; fi
@@ -694,7 +666,7 @@ deploy_service() {
         gcloud builds submit --tag gcr.io/${PROJECT_ID}/gcp-v2ray-image . --quiet > /dev/null 2>&1
     ) &
     build_pid=$!
-    progress_bar_monitor $build_pid "Building and pushing container image"
+    spinner $build_pid "Building and pushing container image"
     wait $build_pid || error "${EMOJI_ERROR} Build failed. Check the Dockerfile or repository for issues."
     
     # 5. Deploy Service (Quiet)
@@ -713,7 +685,7 @@ deploy_service() {
         eval "$deploy_cmd" > /dev/null 2>&1
     ) &
     deploy_pid=$!
-    progress_bar_monitor $deploy_pid "Deploying service to Cloud Run"
+    spinner $deploy_pid "Deploying service to Cloud Run"
     wait $deploy_pid || error "${EMOJI_ERROR} Deployment failed. Check Cloud Run logs for details."
     
     # 6. Get URL and create Link
