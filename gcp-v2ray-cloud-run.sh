@@ -1,11 +1,7 @@
 #!/bin/bash
 
-# ==============================================================================
-# GCP Cloud Run V2RAY Protocol Deployment (VLESS, VLESS-gRPC, TROJAN)
-# Project: https://github.com/ahlflk/GCP-V2RAY-Cloud-Run.git
-# ==============================================================================
+# GCP Cloud Run V2Ray(VLESS/Trojan) Deployment
 
-# Exit immediately if a command exits with a non-zero status or if any pipeline fails
 set -euo pipefail
 
 # ------------------------------------------------------------------------------
@@ -25,31 +21,29 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 # Global Configuration Variables (Defaults)
-PROTOCOL="VLESS-WS"            # Will be set by select_protocol
-UUID=""                        # Will be set by select_uuid
-REGION="us-central1"           # Will be set by select_region
+PROTOCOL=""
+UUID=""
+TROJAN_PASSWORD="ahlflk"
+REGION="us-central1"
 CPU="2"
 MEMORY="2Gi"
-SERVICE_NAME="gcp-ahlflk-v2ray" # Modified default name for clarity
+SERVICE_NAME="gcp-ahlflk"
 HOST_DOMAIN="m.googleapis.com"
-V2RAY_PATH="/ahlflk"           # Used for WS/gRPC Path
+TELEGRAM_DESTINATION="none"
 
-# Git Repository (As per user request)
-SOURCE_REPO="https://github.com/ahlflk/GCP-V2RAY-Cloud-Run.git"
-REPO_FOLDER_NAME="GCP-V2RAY-Cloud-Run" # The name of the folder to save files
+# Protocol Specific Defaults
+VLESS_PATH="/ahlflk"
+TROJAN_PATH="/ahlflk"
+VLESS_GRPC_SERVICE_NAME="ahlflk"
 
 # Telegram Variables (will be set during selection)
-TELEGRAM_DESTINATION="none"
 TELEGRAM_BOT_TOKEN=""
 TELEGRAM_CHANNEL_ID=""
 TELEGRAM_CHAT_ID=""
 TELEGRAM_GROUP_ID=""
 
-# Project ID holder (Will be set during auto_deployment_setup)
-PROJECT_ID=""
-
 # ------------------------------------------------------------------------------
-# 2. UTILITY FUNCTIONS (LOGGING, UI, VALIDATION) - (Kept mostly intact)
+# 2. UTILITY FUNCTIONS (LOGGING, UI, VALIDATION)
 # ------------------------------------------------------------------------------
 
 # Emoji Function
@@ -66,7 +60,7 @@ show_emojis() {
     EMOJI_CLEAN="🧹"
 }
 
-# Beautiful Header/Banner
+# Beautiful Header/Banner (New Design: Fully enclosed box, adjusted to title width)
 header() {
     local title="$1"
     local border_color="${ORANGE}"
@@ -74,15 +68,17 @@ header() {
     
     # Calculate title length
     local title_length=${#title}
-    local padding=4 
+    local padding=4 # Space on both sides: " | <space> TITLE <space> | "
     local total_width=$((title_length + padding))
     
     # Create top/bottom border line (using Unicode box drawing characters)
+    # The length of the line part inside the corners is total_width - 2
     local top_bottom_fill=$(printf '━%.0s' $(seq 1 $((total_width - 2))))
     local top_bottom="${border_color}┏${top_bottom_fill}┓${NC}"
     local bottom_line="${border_color}┗${top_bottom_fill}┛${NC}"
     
     # Create title line
+    # "┃" + <space> + title + <space> + "┃"
     local title_line="${border_color}┃${NC} ${text_color}${BOLD}${title}${NC} ${border_color}┃${NC}"
     
     echo -e "${top_bottom}"
@@ -112,32 +108,48 @@ selected_info() {
     echo -e "${GREEN}${BOLD}${EMOJI_SELECT} Selected:${NC} ${CYAN}$1${NC}"
 }
 
-# PROGRESS BAR
-progress_bar() {
-    local label="${1:-Processing}" 
-    local duration=${2:-3}  
-    local width=30         
+# Progress Bar Function (Replacing Spinner)
+# This function monitors a PID, estimates duration, and shows a bar
+progress_bar_monitor() {
+    local pid=$1
+    local message="$2"
+    local width=30
     local start=$(date +%s)
     local elapsed=0
     
-    # Progress Bar Loop
-    while [ $elapsed -lt $duration ]; do
-        local percent=$((elapsed * 100 / duration))
+    # Initial status message
+    echo -e "${ORANGE}  [${EMOJI_PROC}]${NC} ${WHITE}$message...${NC}"
+    
+    # Estimation (since we can't truly know the time, we use an arbitrary max duration 15s)
+    local max_duration=15
+    
+    while kill -0 $pid 2>/dev/null; do
+        elapsed=$(( $(date +%s) - start ))
+        
+        # Calculate percent based on elapsed time, capped at 99%
+        local percent=$((elapsed * 100 / max_duration))
+        if [ "$percent" -gt 99 ]; then percent=99; fi
+
         local num_chars=$((percent * width / 100))
         local bar=$(printf '#%.0s' $(seq 1 $num_chars))
         local spaces=$(printf ' %.0s' $(seq 1 $((width - num_chars))))
         
-        local remaining=$((duration - elapsed))
+        local current_time=$(date +%H:%M:%S)
         
-        # Display label, progress bar, percentage, and ETA
-        printf "\r${BOLD}${EMOJI_PROC} ${label}... ${NC}[${LIGHT_GREEN}%s${NC}${ORANGE}%s${NC}] %d%% (ETA: %ds)${NC}" "$bar" "$spaces" "$percent" "$remaining"
+        # Display progress bar
+        printf "\r${ORANGE}  [${NC} ${LIGHT_GREEN}%s${NC}${ORANGE}%s${NC} ] %d%% (${current_time})${NC}" "$bar" "$spaces" "$percent"
         
-        sleep 0.1
-        elapsed=$(( $(date +%s) - start ))
+        sleep 0.5 # Update every half second
+        
+        # Check if process is running for too long (e.g., build/deploy)
+        if [ "$elapsed" -gt 120 ]; then # 2 minutes
+            warn "Process is running longer than expected (${elapsed}s)."
+            # Continue monitoring, but stop increasing the bar based on max_duration
+        fi
     done
     
-    # Final persistent line
-    printf "\r${BOLD}${EMOJI_PROC} ${label}... ${NC}[${LIGHT_GREEN}%s${NC}] 100%% Done! (0s)${NC}\n" "$(printf '#%.0s' $(seq 1 $width))"
+    # Final persistent line when the process finishes
+    printf "\r${GREEN}  [${EMOJI_SUCCESS}]${NC} ${WHITE}$message... Done!${NC}\n"
 }
 
 # Function to validate UUID format
@@ -153,6 +165,7 @@ validate_uuid() {
 # Function to validate Telegram IDs (combined for Channel/Group/Chat)
 validate_id() {
     if [[ ! $1 =~ ^-?[0-9]+$ ]]; then
+        # Changed 'error' to 'warn' and use return 1 to continue the loop
         warn "Invalid Telegram ID format. Must be a number (e.g., -1001234567890 or 123456789)."
         return 1
     fi
@@ -161,7 +174,7 @@ validate_id() {
 
 # Function to validate Telegram Bot Token
 validate_bot_token() {
-    local token_pattern='^[0-9]{8,10}:[a-zA-Z0-9_-]{35}$'
+    local token_pattern='^[0-9]{8,10}:[a-zA-Z0-Z0-9_-]{35}$'
     if [[ ! $1 =~ $token_pattern ]]; then
         warn "Invalid Telegram Bot Token format. Please try again."
         return 1
@@ -170,45 +183,12 @@ validate_bot_token() {
 }
 
 # ------------------------------------------------------------------------------
-# 3. USER INPUT FUNCTIONS (MODIFIED & NEW)
+# 3. USER INPUT FUNCTIONS (IN ORDER)
 # ------------------------------------------------------------------------------
 
-# A. Protocol Selection (NEW)
-select_protocol() {
-    header "⚙️ V2ray Protocol Selection"
-    
-    while true; do
-        echo -e "${CYAN}Select the desired protocol for deployment:${NC}"
-        echo -e "${BOLD}1.${NC} VLESS over WebSocket (WS) + TLS ${GREEN}[DEFAULT]${NC}"
-        echo -e "${BOLD}2.${NC} VLESS over gRPC (gRPC) + TLS"
-        echo -e "${BOLD}3.${NC} TROJAN over WebSocket (WS) + TLS"
-        echo
-        
-        read -p "Select protocol (1): " protocol_choice
-        protocol_choice=${protocol_choice:-1}
-        
-        case $protocol_choice in
-            1) PROTOCOL="VLESS-WS"; break ;;
-            2) PROTOCOL="VLESS-gRPC"; break ;;
-            3) PROTOCOL="TROJAN-WS"; break ;;
-            *) echo -e "${RED}Invalid selection. Please enter a number between 1-3.${NC}"; continue ;;
-        esac
-    done
-
-    selected_info "Protocol: $PROTOCOL"
-    
-    # VLESS requires UUID, TROJAN does not (it uses password)
-    if [[ "$PROTOCOL" == "TROJAN-WS" ]]; then
-        info "TROJAN selected. UUID will be used as the Password."
-    fi
-    echo
-}
-
-# B. Telegram Destination Selection (Kept intact)
+# A. Telegram Destination Selection
 select_telegram_destination() {
     header "📱 Telegram Notification Settings"
-    # ... (Keep the content of select_telegram_destination here)
-    # --- (Function content omitted for brevity, assumed intact) ---
     
     while true; do
         echo -e "${CYAN}Select where to send the deployment link:${NC}"
@@ -266,12 +246,33 @@ select_telegram_destination() {
     echo
 }
 
-# C. Region Selection (Kept intact)
+# B. Protocol Selection
+select_protocol() {
+    header "🌐 V2RAY Protocol Selection"
+    echo -e "${CYAN}Choose your preferred V2Ray protocol for the Cloud Run instance:${NC}"
+    echo -e "${BOLD}1.${NC} VLESS-WS (VLESS + WebSocket + TLS) ${GREEN}[DEFAULT]${NC}" 
+    echo -e "${BOLD}2.${NC} VLESS-gRPC (VLESS + gRPC + TLS)"
+    echo -e "${BOLD}3.${NC} Trojan-WS (Trojan + WebSocket + TLS)"
+    echo
+    
+    while true; do
+        read -p "Select V2Ray Protocol (1): " protocol_choice
+        protocol_choice=${protocol_choice:-1}
+        case $protocol_choice in
+            1) PROTOCOL="VLESS-WS"; break ;;
+            2) PROTOCOL="VLESS-gRPC"; break ;;
+            3) PROTOCOL="Trojan-WS"; break ;;
+            *) echo -e "${RED}Invalid selection. Please enter a number between 1-3.${NC}" ;;
+        esac
+    done
+    
+    selected_info "Protocol: $PROTOCOL"
+    echo
+}
+
+# C. Region Selection
 select_region() {
     header "🌍 GCP Region Selection"
-    # ... (Keep the content of select_region here)
-    # --- (Function content omitted for brevity, assumed intact) ---
-    
     echo -e "${CYAN}Available GCP Regions:${NC}"
     echo -e "${BOLD}1.${NC}  🇺🇸 us-central1 (Council Bluffs, Iowa, North America) ${GREEN}[DEFAULT]${NC}"
     echo -e "${BOLD}2.${NC}  🇺🇸 us-east1 (Moncks Corner, South Carolina, North America)" 
@@ -311,12 +312,9 @@ select_region() {
     echo
 }
 
-# D. CPU Configuration (Kept intact)
+# D. CPU Configuration
 select_cpu() {
     header "🖥️  CPU Configuration"
-    # ... (Keep the content of select_cpu here)
-    # --- (Function content omitted for brevity, assumed intact) ---
-    
     echo -e "${CYAN}Available Options:${NC}"
     echo -e "${BOLD}1.${NC} 1  CPU Core (Lightweight traffic)"
     echo -e "${BOLD}2.${NC} 2  CPU Cores (Balanced) ${GREEN}[DEFAULT]${NC}"
@@ -342,12 +340,10 @@ select_cpu() {
     echo
 }
 
-# E. Memory Configuration (Kept intact)
+# E. Memory Configuration
 select_memory() {
     header "💾 Memory Configuration"
-    # ... (Keep the content of select_memory here)
-    # --- (Function content omitted for brevity, assumed intact) ---
-
+    
     echo -e "${CYAN}Available Options:${NC}"
     echo -e "${BOLD}1.${NC} 512Mi (Minimum requirement)"
     echo -e "${BOLD}2.${NC} 1Gi (Basic usage)"
@@ -377,24 +373,25 @@ select_memory() {
     echo
 }
 
-# F. Service Name Configuration (Updated default)
+# F. Service Name Configuration
 select_service_name() {
     header "${EMOJI_PROC} Service Name Configuration"
     
-    echo -e "${CYAN}Deployment Service Name (Default: $SERVICE_NAME):${NC}"
+    echo -e "${CYAN}Deployment Service Name (Default: gcp-ahlflk):${NC}"
     
     read -p "Enter custom name or press Enter to use default: " custom_name
     SERVICE_NAME=${custom_name:-$SERVICE_NAME}
     
     if [[ -z "$SERVICE_NAME" ]]; then
-        warn "Service name cannot be empty. Using default: $SERVICE_NAME."
+        warn "Service name cannot be empty. Using default: gcp-ahlflk."
+        SERVICE_NAME="gcp-ahlflk"
     fi
     
     selected_info "Service Name: $SERVICE_NAME"
     echo
 }
 
-# G. Host Domain Configuration (Kept intact)
+# G. Host Domain Configuration
 select_host_domain() {
     header "🌐 Host Domain Configuration"
     
@@ -412,119 +409,102 @@ select_host_domain() {
     echo
 }
 
-# H. Path Configuration (NEW for WS/gRPC)
-select_v2ray_path() {
-    if [[ "$PROTOCOL" == "VLESS-WS" || "$PROTOCOL" == "VLESS-gRPC" || "$PROTOCOL" == "TROJAN-WS" ]]; then
-        header "🗺️ WebSocket/gRPC Path Configuration"
-        
-        echo -e "${CYAN}VLESS/TROJAN Path (Default: $V2RAY_PATH):${NC}"
-        
-        read -p "Enter custom path (e.g., /mysecret) or press Enter to use default: " custom_path
-        V2RAY_PATH=${custom_path:-$V2RAY_PATH}
-        
-        # Ensure path starts with /
-        if [[ ! "$V2RAY_PATH" =~ ^/ ]]; then
-            V2RAY_PATH="/$V2RAY_PATH"
-            info "Path corrected to start with /: $V2RAY_PATH"
-        fi
-        
-        if [[ -z "$V2RAY_PATH" ]]; then
-            warn "Path cannot be empty. Using default: /ahlflk."
-            V2RAY_PATH="/ahlflk"
-        fi
-        
-        selected_info "Path: $V2RAY_PATH"
-        echo
-    fi
-}
-
-# I. UUID Configuration (VLESS/TROJAN uses it as password) (Updated)
-select_uuid() {
-    header "🔑 UUID/Password Configuration"
+# H. UUID/Password Configuration
+select_uuid_password() {
+    header "🔑 UUID / Password Configuration"
     
-    local default_uuid="3675119c-14fc-46a4-b5f3-9a2c91a7d802"
-    
-    if [[ "$PROTOCOL" == "TROJAN-WS" ]]; then
-        info "TROJAN uses this as the Password. It must be a 32-digit UUID."
-    fi
-        
-    while true; do
-        echo -e "${CYAN}UUID/Password Options:${NC}"
-        echo -e "${BOLD}1.${NC} Use Default UUID ($default_uuid) ${GREEN}[DEFAULT]${NC}"
-        echo -e "${BOLD}2.${NC} Generate New UUID"
-        echo -e "${CYAN}You can also paste a custom UUID/Password directly, or press Enter for default.${NC}"
+    if [[ "$PROTOCOL" == "Trojan-WS" ]]; then
+        selected_info "Protocol is Trojan-WS, Password default: ${TROJAN_PASSWORD}"
         echo
+        echo -e "${CYAN}Trojan Password (Default: ahlflk):${NC}"
+        read -p "Enter custom password or press Enter to use default: " custom_pw
+        TROJAN_PASSWORD=${custom_pw:-$TROJAN_PASSWORD}
+        selected_info "Trojan Password: ${TROJAN_PASSWORD}"
+        
+    else
+        local default_uuid="3675119c-14fc-46a4-b5f3-9a2c91a7d802"
+        
+        while true; do
+            echo -e "${CYAN}UUID Options:${NC}"
+            echo -e "${BOLD}1.${NC} Use Default UUID (3675...802) ${GREEN}[DEFAULT]${NC}"
+            echo -e "${BOLD}2.${NC} Generate New UUID"
+            echo -e "${CYAN}You can also paste a custom UUID directly, or press Enter for default.${NC}"
+            echo
 
-        read -p "Enter 1, 2, or Paste Custom UUID/Password: " uuid_input
-        uuid_input=${uuid_input:-1}
+            read -p "Enter 1, 2, or Paste Custom UUID: " uuid_input
+            uuid_input=${uuid_input:-1}
 
-        if [[ "$uuid_input" == "1" ]]; then
-            UUID="$default_uuid"
-            log "Using Default UUID/Password."
-            break
-        elif [[ "$uuid_input" == "2" ]]; then
-            if command -v uuidgen &> /dev/null; then
-                UUID=$(uuidgen)
-            else
-                # Fallback
-                UUID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "$default_uuid")
-                if [[ "$UUID" == "$default_uuid" ]]; then
-                     warn "uuidgen not found. Using default UUID."
+            if [[ "$uuid_input" == "1" ]]; then
+                UUID="$default_uuid"
+                log "Using Default UUID."
+                break
+            elif [[ "$uuid_input" == "2" ]]; then
+                if command -v uuidgen &> /dev/null; then
+                    UUID=$(uuidgen)
+                else
+                    UUID=$(cat /proc/sys/kernel/random/uuid)
                 fi
+                log "Generated New UUID: $UUID"
+                break
+            elif validate_uuid "$uuid_input"; then
+                # Custom UUID validation successful
+                UUID="$uuid_input"
+                log "Using Custom UUID: $UUID"
+                break
+            else
+                echo -e "${RED}Invalid input. Please enter 1, 2, or a valid custom UUID.${NC}" 
             fi
-            log "Generated New UUID/Password: $UUID"
-            break
-        elif validate_uuid "$uuid_input"; then
-            # Custom UUID/Password validation successful (UUID format is required for VLESS and recommended for Trojan)
-            UUID="$uuid_input"
-            log "Using Custom UUID/Password: $UUID"
-            break
-        else
-            echo -e "${RED}Invalid input. Please enter 1, 2, or a valid custom UUID.${NC}" 
+        done
+        
+        selected_info "UUID: $UUID"
+        
+        # VLESS-gRPC ServiceName
+        if [[ "$PROTOCOL" == "VLESS-gRPC" ]]; then
+            echo
+            echo -e "${CYAN}VLESS-gRPC ServiceName (Default: ahlflk):${NC}"
+            read -p "Enter custom ServiceName or press Enter to use default: " custom_service_name
+            VLESS_GRPC_SERVICE_NAME=${custom_service_name:-$VLESS_GRPC_SERVICE_NAME}
+            selected_info "gRPC ServiceName: $VLESS_GRPC_SERVICE_NAME"
         fi
-    done
-    
-    selected_info "UUID/Password: $UUID"
+    fi
     echo
 }
 
-
-# J. Summary and Confirmation (Updated)
+# I. Summary and Confirmation
 show_config_summary() {
-    # Get current configured project ID for display
-    local temp_project_id=$(gcloud config get-value project 2>/dev/null || echo "Not Configured (Deployment will fail)")
-    
     header "${EMOJI_CHECK} Configuration Summary"
+    # Project ID moved to top
+    echo -e "${CYAN}${BOLD}Project ID:${NC}    $(gcloud config get-value project)"
+    echo -e "${CYAN}${BOLD}Protocol:${NC}      $PROTOCOL"
+    echo -e "${CYAN}${BOLD}Region:${NC}        $REGION"
+    echo -e "${CYAN}${BOLD}Service Name:${NC}  $SERVICE_NAME"
+    echo -e "${CYAN}${BOLD}Host Domain:${NC}   $HOST_DOMAIN"
     
-    # Using printf for alignment
-    printf "${CYAN}${BOLD}%-25s${NC} %s\n" "Project ID:"             "$temp_project_id"
-    printf "${CYAN}${BOLD}%-25s${NC} %s\n" "Protocol:"               "$PROTOCOL"
-    printf "${CYAN}${BOLD}%-25s${NC} %s\n" "Region:"                 "$REGION"
-    printf "${CYAN}${BOLD}%-25s${NC} %s\n" "Service Name:"           "$SERVICE_NAME"
-    printf "${CYAN}${BOLD}%-25s${NC} %s\n" "Host Domain (SNI):"     "$HOST_DOMAIN"
-    printf "${CYAN}${BOLD}%-25s${NC} %s\n" "UUID/Password:"          "$UUID"
-    
-    if [[ "$PROTOCOL" == "VLESS-WS" || "$PROTOCOL" == "VLESS-gRPC" || "$PROTOCOL" == "TROJAN-WS" ]]; then
-        printf "${CYAN}${BOLD}%-25s${NC} %s\n" "Path (WS/gRPC):"      "$V2RAY_PATH"
+    if [[ "$PROTOCOL" == "Trojan-WS" ]]; then
+        echo -e "${CYAN}${BOLD}Password:${NC}      ${TROJAN_PASSWORD}"
+        echo -e "${CYAN}${BOLD}Path:${NC}          $TROJAN_PATH"
+    elif [[ "$PROTOCOL" == "VLESS-gRPC" ]]; then
+        echo -e "${CYAN}${BOLD}UUID:${NC}          $UUID"
+        echo -e "${CYAN}${BOLD}ServiceName:${NC}   $VLESS_GRPC_SERVICE_NAME"
+    else
+        echo -e "${CYAN}${BOLD}UUID:${NC}          $UUID"
+        echo -e "${CYAN}${BOLD}Path:${NC}          $VLESS_PATH"
     fi
     
-    printf "${CYAN}${BOLD}%-25s${NC} %s\n" "CPU/Memory:"             "$CPU core(s) / $MEMORY"
+    echo -e "${CYAN}${BOLD}CPU/Memory:${NC}    $CPU core(s) / $MEMORY"
     
     if [[ "$TELEGRAM_DESTINATION" != "none" ]]; then
-        printf "${CYAN}${BOLD}%-25s${NC} %s\n" "Telegram Notification:" "$TELEGRAM_DESTINATION (Token: ${TELEGRAM_BOT_TOKEN:0:8}...)"
+        echo -e "${CYAN}${BOLD}Telegram:${NC}      $TELEGRAM_DESTINATION (Token: ${TELEGRAM_BOT_TOKEN:0:8}...)"
     else
-        printf "${CYAN}${BOLD}%-25s${NC} %s\n" "Telegram Notification:" "Not configured"
+        echo -e "${CYAN}${BOLD}Telegram:${NC}      Not configured"
     fi
     echo
     
     while true; do
+        # FIX: Using echo -e and subshell for the prompt to correctly handle color codes
         read -p "$(echo -e "${ORANGE}${BOLD}Proceed with deployment? (y/n): ${NC}")" confirm
         case $confirm in
-            [Yy]* ) 
-                # After confirmation, start the auto-setup immediately
-                auto_deployment_setup
-                break
-                ;;
+            [Yy]* ) break;;
             [Nn]* ) 
                 info "Deployment cancelled by user"
                 exit 0
@@ -534,133 +514,88 @@ show_config_summary() {
     done
 }
 
-# ------------------------------------------------------------------------------
-# MODIFIED: AUTO DEPLOYMENT SETUP (Project ID CLI & API Enablement)
-# ------------------------------------------------------------------------------
-auto_deployment_setup() {
-    log "Starting initial GCP setup..."
-    
-    # 1. Check and Set Project ID CLI Configuration
-    info "Fetching Project ID for CLI configuration."
-    PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
-    
-    if [[ -z "$PROJECT_ID" ]]; then
-        error "GCP Project ID is not configured in gcloud CLI. Please run 'gcloud auth login' and 'gcloud config set project [PROJECT_ID]' and try again."
-    fi
-    
-    selected_info "Using configured Project ID: $PROJECT_ID"
-
-    # Set Project ID CLI Configuration (redundant but ensures the current context)
-    log "Verifying gcloud CLI active project to: ${PROJECT_ID}"
-    gcloud config set project "$PROJECT_ID" --quiet > /dev/null 2>&1
-    progress_bar "Setting Project ID CLI" 1 
-
-    # 2. Enable Required APIs (Artifact Registry is often better than Container Registry now)
-    log "Enabling required APIs (Cloud Run, Artifact Registry, Cloud Build)..."
-    gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com --project "$PROJECT_ID" --quiet > /dev/null 2>&1
-    progress_bar "Enabling APIs" 1 
-
-    log "Initial GCP setup complete. Proceeding with deployment..."
-    progress_bar "GCP Setup" 1 
-}
 
 # ------------------------------------------------------------------------------
-# 4. CORE DEPLOYMENT FUNCTIONS (MODIFIED)
+# 4. CORE DEPLOYMENT FUNCTIONS (LOGIC REMAINS THE SAME)
 # ------------------------------------------------------------------------------
 
-# Clone Repo and Extract Files (MODIFIED for the new repo)
-clone_and_extract() {
-    log "Cloning repository from $SOURCE_REPO..."
-    # Clone to a temporary folder name 'temp-repo'
-    git clone "$SOURCE_REPO" temp-repo > /dev/null 2>&1
-    progress_bar "Cloning Repository" 5 
-
-    if [ ! -d "temp-repo" ]; then
-        error "Failed to clone repository from $SOURCE_REPO. Check your network or the repository URL."
-    fi
-    
-    cd temp-repo
-
-    # The repo must contain these files. If they are not found, the repo is likely incorrect.
-    if [ ! -f "Dockerfile" ]; then
-        error "Dockerfile not found in the cloned repository. Please check the repository structure."
-    fi
-    if [ ! -f "config.json" ]; then
-        error "config.json not found in the cloned repository. Please check the repository structure."
-    fi
-
-    # Copy files to the current working directory for gcloud builds submit
-    log "Copying Dockerfile and config.json to local directory."
-    cp Dockerfile ../Dockerfile 
-    cp config.json ../config.json 
-    cd ..
-    
-    # Clean up the temporary clone folder
-    rm -rf temp-repo 
-    log "Finished cloning and cleanup."
-}
-
-# Config File Preparation (MODIFIED)
+# Config File Preparation
 prepare_config_files() {
-    log "Preparing Xray config file for $PROTOCOL..."
+    log "Preparing Xray config file based on $PROTOCOL..."
+    
     if [[ ! -f "config.json" ]]; then
-        error "config.json not found locally. Was it successfully cloned and copied?"
+        error "config.json not found in GCP-V2RAY-Cloud-Run directory."
+        return 1
     fi
-    
-    # Check the placeholder UUID/Password
-    sed -i "s/PLACEHOLDER_UUID/$UUID/g" config.json
-    
-    # Check the placeholder Path
-    sed -i "s|/v2ray-path|$V2RAY_PATH|g" config.json
-    
-    # Check the placeholder Protocol if needed (though the config.json should handle all three protocols internally)
-    # The config.json in the repo is expected to handle all protocols and use these variables.
-    
-    progress_bar "Preparing Config" 10 
-}
-
-# Share Link Creation (Unified and simplified)
-create_share_link() {
-    local SERVICE_NAME="$1"
-    local DOMAIN="$2"
-    local UUID="$3"
-    local SHARE_LINK=""
-    
-    # URL Encode path
-    local PATH_ENCODED=$(echo "$V2RAY_PATH" | sed 's/\//%2F/g')
-    
-    # Remove https:// from DOMAIN if present
-    DOMAIN="${DOMAIN#https://}"
-    DOMAIN="${DOMAIN%/}"
     
     case $PROTOCOL in
         "VLESS-WS")
-            SHARE_LINK="vless://${UUID}@${DOMAIN}:443?path=${PATH_ENCODED}&security=tls&encryption=none&host=${HOST_DOMAIN}&fp=randomized&type=ws&sni=${HOST_DOMAIN}#${SERVICE_NAME}_VLESS-WS"
+            sed -i "s/PLACEHOLDER_UUID/$UUID/g" config.json
+            sed -i "s|/vless|$VLESS_PATH|g" config.json
             ;;
+            
         "VLESS-gRPC")
-            SHARE_LINK="vless://${UUID}@${DOMAIN}:443?mode=gun&security=tls&encryption=none&type=grpc&serviceName=${V2RAY_PATH}#${SERVICE_NAME}_VLESS-gRPC"
+            sed -i "s/PLACEHOLDER_UUID/$UUID/g" config.json
+            sed -i 's|"network": "ws"|"network": "grpc"|g' config.json
+            sed -i "s|\"wsSettings\": { \"path\": \"/vless\" }|\"grpcSettings\": { \"serviceName\": \"$VLESS_GRPC_SERVICE_NAME\" }|g" config.json
             ;;
-        "TROJAN-WS")
-            # Trojan over WS/TLS using UUID as password
-            SHARE_LINK="trojan://${UUID}@${DOMAIN}:443?path=${PATH_ENCODED}&security=tls&encryption=none&host=${HOST_DOMAIN}&type=ws&sni=${HOST_DOMAIN}#${SERVICE_NAME}_TROJAN-WS"
+            
+        "Trojan-WS")
+            sed -i 's|"protocol": "vless"|"protocol": "trojan"|g' config.json
+            sed -i "s|\"clients\": \[ { \"id\": \"PLACEHOLDER_UUID\" } ]|\"users\": \[ { \"password\": \"$TROJAN_PASSWORD\" } ]|g" config.json
+            sed -i "s|\"path\": \"/vless\"|\"path\": \"$TROJAN_PATH\"|g' config.json
             ;;
+            
         *)
-            SHARE_LINK="Error: Protocol $PROTOCOL not supported for link generation."
+            error "Unknown protocol: $PROTOCOL. Cannot prepare config."
+            ;;
+    esac
+}
+
+# Share Link Creation (Uses the respective path variable)
+create_share_link() {
+    local service_name="$1"
+    local domain="$2"
+    local uuid_or_password="$3"
+    local protocol_type="$4"
+    local link=""
+    
+    # URL Encode path/serviceName
+    local path_encoded
+    if [[ "$protocol_type" == "VLESS-gRPC" ]]; then
+        path_encoded=$(echo "$VLESS_GRPC_SERVICE_NAME" | sed 's/\//%2F/g')
+    else
+        path_encoded=$(echo "${VLESS_PATH:-$TROJAN_PATH}" | sed 's/\//%2F/g')
+    fi
+    
+    local host_encoded=$(echo "$HOST_DOMAIN" | sed 's/\./%2E/g')
+    
+    case $protocol_type in
+        "VLESS-WS")
+            link="vless://${uuid_or_password}@${HOST_DOMAIN}:443?path=${path_encoded}&security=tls&encryption=none&host=${domain}&fp=randomized&type=ws&sni=${domain}#${service_name}_VLESS-WS"
+            ;;
+            
+        "VLESS-gRPC")
+            link="vless://${uuid_or_password}@${HOST_DOMAIN}:443?security=tls&encryption=none&host=${domain}&type=grpc&serviceName=${path_encoded}&sni=${domain}#${service_name}_VLESS-gRPC"
+            ;;
+            
+        "Trojan-WS")
+            link="trojan://${uuid_or_password}@${HOST_DOMAIN}:443?path=${path_encoded}&security=tls&host=${domain}&type=ws&sni=${domain}#${service_name}_Trojan-WS"
             ;;
     esac
     
-    echo "$SHARE_LINK"
+    echo "$link"
 }
 
-# Telegram Notification Function (Simplified) - (Kept intact)
+# Telegram Notification Function (Simplified)
 send_to_telegram() {
     local chat_id="$1"
     local message="$2"
+    # Escape special Markdown chars, but specifically keep the [link](url) format
+    message=$(echo "$message" | sed 's/\*/\\*/g; s/_/\\_/g; s/`/\\`/g; s/\[🔗 Xray Link\]([^)]*)/[&](/g; s/\[/\\\[/g; s/\]/\\\]/g')
+    # Re-enable the specific link format
+    message=$(echo "$message" | sed 's/\\\[🔗 Xray Link\\\]/\[🔗 Xray Link\]/g')
     
-    # Simple escaping, preserving the link format [Text](URL)
-    message=$(echo "$message" | sed 's/\*/\\*/g; s/_/\\_/g; s/`/\\`/g; s/\[[^]]*\]([^)]*)/PLACEHHOLDER_LINK/g')
-    message=$(echo "$message" | sed 's/\\\[/\[/g; s/\\\]/\]/g; s/PLACEHOLDER_LINK/\\0/g')
-
     curl -s -o /dev/null -w "%{http_code}" -X POST \
         -H "Content-Type: application/json" \
         -d "{\"chat_id\": \"${chat_id}\", \"text\": \"$message\", \"parse_mode\": \"MARKDOWN\", \"disable_web_page_preview\": true}" \
@@ -694,126 +629,164 @@ send_deployment_notification() {
     esac
 }
 
-# Deploy to Cloud Run (MODIFIED to use Artifact Registry, which is the current best practice)
-deploy_to_cloud_run() {
-    local project_id="$PROJECT_ID"
-    local ARTIFACT_REPO_NAME="cloud-run-source-deploy" # Default repo name for source deploys
-    local IMAGE_TAG="${REGION}-docker.pkg.dev/${project_id}/${ARTIFACT_REPO_NAME}/${SERVICE_NAME}:latest"
-    
-    # 1. Create Artifact Registry Repository if it doesn't exist (Only needed if not using gcloud run deploy --source)
-    # The current approach is simpler and uses gcloud run deploy --source, which uses Cloud Build.
-    
-    log "Deploying to Cloud Run service from source $SOURCE_REPO..."
-    
-    # Using the simpler deployment from source, which automatically handles:
-    # 1. Cloning the repo
-    # 2. Building the Dockerfile via Cloud Build
-    # 3. Pushing the image to Artifact Registry
-    # 4. Deploying the service
-    
-    gcloud run deploy "$SERVICE_NAME" \
-      --source "." \
-      --region "$REGION" \
-      --allow-unauthenticated \
-      --port 8080 \
-      --memory "$MEMORY" \
-      --cpu "$CPU" \
-      --no-check-service-account \
-      --set-env-vars "UUID=$UUID,PATH=$V2RAY_PATH,HOST=$HOST_DOMAIN,PROTOCOL=$PROTOCOL" \
-      --quiet 
-    # NOTE: The config.json is still modified locally and deployed via Dockerfile, 
-    # this command uses the *current local directory* which contains the modified config.json
-    progress_bar "Building & Deploying Service" 30 
-
-    local service_url=$(gcloud run services describe "$SERVICE_NAME" --region "$REGION" --format='value(status.url)' --quiet 2>/dev/null)
-    if [[ -z "$service_url" ]]; then
-        error "Failed to retrieve service URL after deployment. Check Cloud Build logs for errors."
-    fi
-
-    local share_link=$(create_share_link "$SERVICE_NAME" "$service_url" "$UUID")
-
-    log "Deployment completed!"
-    selected_info "Service URL: $service_url"
-    selected_info "$PROTOCOL Share Link: $share_link"
-
-    local telegram_message="🚀 *GCP V2ray Deployment Complete!*\n\n📋 *Details:*\n• Protocol: $PROTOCOL\n• Region: $REGION\n• Service: $SERVICE_NAME\n• UUID/Pass: $UUID\n\n🔗 [$PROTOCOL Link]($share_link)"
-    
-    send_deployment_notification "$telegram_message"
-}
-
-# Create Folder with deployment-info.txt (MODIFIED folder name)
-create_project_folder() {
-    local project_id="$PROJECT_ID"
-    local service_url=$(gcloud run services describe $SERVICE_NAME --region $REGION --format='value(status.url)' --quiet 2>/dev/null)
-    local share_link=$(create_share_link "$SERVICE_NAME" "$service_url" "$UUID")
-    local folder_name="$REPO_FOLDER_NAME-$SERVICE_NAME"
-
-    log "Saving project files and info to folder: $folder_name/"
-    mkdir -p "$folder_name"
-    
-    # Move the generated files into the new folder
-    mv Dockerfile "$folder_name/" 
-    mv config.json "$folder_name/" 
-    
-    cat > "$folder_name/deployment-info.txt" << EOF
-GCP V2RAY Cloud Run Deployment Info
-===================================
-
-Project ID: $project_id
-Region: $REGION
-Service Name: $SERVICE_NAME
-Protocol: $PROTOCOL
-UUID/Password: $UUID
-Path: $V2RAY_PATH
-Host Domain: $HOST_DOMAIN
-CPU: $CPU
-Memory: $MEMORY
-Service URL: $service_url
-$PROTOCOL Share Link: $share_link
-
-Deployment Date: $(date)
-
-For more details, check GCP Console: https://console.cloud.google.com/run?project=$project_id
-EOF
-    
-    log "Project files and info saved successfully in: $folder_name/"
-    info "Check the '$folder_name' folder for your deployment files and details."
-}
-
 # ------------------------------------------------------------------------------
 # 5. MAIN EXECUTION BLOCK
 # ------------------------------------------------------------------------------
 
-# Initialize emojis
-show_emojis
-
 # Run user input functions in specified order
 run_user_inputs() {
-    # Display main header
-    header "${EMOJI_DEPLOY} GCP Cloud Run V2RAY Protocol Deployment"
-    select_protocol      # NEW: Select VLESS-WS, VLESS-gRPC, or TROJAN
+# Display main header
+header "${EMOJI_DEPLOY} GCP Cloud Run V2Ray(VLESS/Trojan) Deployment"
     select_telegram_destination
+    select_protocol
     select_region
     select_cpu
     select_memory
     select_service_name
     select_host_domain
-    select_v2ray_path    # NEW: Select Path for WS/gRPC
-    select_uuid          # UUID is used for VLESS ID or TROJAN Password
-    # show_config_summary will call auto_deployment_setup() upon 'Yes'
-    show_config_summary 
+    select_uuid_password
+    show_config_summary
 }
 
-# Main execution
+# Core deployment logic
+deploy_service() {
+    local PROJECT_ID=$(gcloud config get-value project)
+    
+    log "${EMOJI_DEPLOY} Starting Cloud Run deployment for $PROTOCOL..."
+    
+    # Validation
+    if ! command -v gcloud &> /dev/null; then error "${EMOJI_ERROR} gcloud CLI is not installed. Please install Google Cloud SDK."; fi
+    if ! command -v git &> /dev/null; then error "${EMOJI_ERROR} git is not installed. Please install git."; fi
+    if [[ -z "$PROJECT_ID" || "$PROJECT_ID" == "(unset)" ]]; then error "${EMOJI_ERROR} No project configured. Run: gcloud config set project PROJECT_ID"; fi
+    
+    # 1. Enable APIs (Quiet)
+    local enable_apis_pid
+    (
+        gcloud services enable cloudbuild.googleapis.com run.googleapis.com iam.googleapis.com --quiet > /dev/null 2>&1
+    ) &
+    enable_apis_pid=$!
+    progress_bar_monitor $enable_apis_pid "Enabling required GCP APIs"
+    wait $enable_apis_pid || warn "${EMOJI_WARN} Failed to enable some APIs (may already be enabled)."
+    
+    # 2. Cleanup and Clone (Quiet)
+    rm -rf GCP-V2RAY-Cloud-Run || true
+    local clone_pid
+    (
+        # Assuming the user has a repository with Dockerfile and config.json ready.
+        # If the original repository is used, we clone that.
+        git clone https://github.com/ahlflk/GCP-V2RAY-Cloud-Run.git GCP-V2RAY-Cloud-Run > /dev/null 2>&1
+    ) &
+    clone_pid=$!
+    progress_bar_monitor $clone_pid "Cloning repository"
+    wait $clone_pid
+    
+    if [[ ! -d "GCP-V2RAY-Cloud-Run" ]]; then error "${EMOJI_ERROR} GCP-V2RAY-Cloud-Run directory not found (cloning failed or directory missing)."; fi
+    
+    cd GCP-V2RAY-Cloud-Run
+    
+    # 3. Prepare Config
+    prepare_config_files
+    
+    # 4. Build Image (Quiet)
+    log "Building container image (quiet mode)..."
+    local build_pid
+    (
+        gcloud builds submit --tag gcr.io/${PROJECT_ID}/gcp-v2ray-image . --quiet > /dev/null 2>&1
+    ) &
+    build_pid=$!
+    progress_bar_monitor $build_pid "Building and pushing container image"
+    wait $build_pid || error "${EMOJI_ERROR} Build failed. Check the Dockerfile or repository for issues."
+    
+    # 5. Deploy Service (Quiet)
+    log "Deploying to Cloud Run..."
+    local deploy_cmd="gcloud run deploy ${SERVICE_NAME} \
+        --image gcr.io/${PROJECT_ID}/gcp-v2ray-image \
+        --platform managed \
+        --region ${REGION} \
+        --allow-unauthenticated \
+        --cpu ${CPU} \
+        --memory ${MEMORY} \
+        --quiet"
+
+    local deploy_pid
+    (
+        eval "$deploy_cmd" > /dev/null 2>&1
+    ) &
+    deploy_pid=$!
+    progress_bar_monitor $deploy_pid "Deploying service to Cloud Run"
+    wait $deploy_pid || error "${EMOJI_ERROR} Deployment failed. Check Cloud Run logs for details."
+    
+    # 6. Get URL and create Link
+    SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} \
+        --region ${REGION} \
+        --format 'value(status.url)' \
+        --quiet)
+    
+    DOMAIN=$(echo "$SERVICE_URL" | sed 's|https://||')
+    
+    local link_user_id
+    if [[ "$PROTOCOL" == "Trojan-WS" ]]; then
+        link_user_id="$TROJAN_PASSWORD"
+    else
+        link_user_id="$UUID"
+    fi
+    
+    SHARE_LINK=$(create_share_link "$SERVICE_NAME" "$DOMAIN" "$link_user_id" "$PROTOCOL")
+    
+    # 7. Final Output & Notification
+    
+    # Telegram Message with Markdown Link Format
+    MESSAGE="*${EMOJI_DEPLOY} Cloud Run ${PROTOCOL} Deploy → Successful ${EMOJI_SUCCESS}*
+━━━━━━━━━━━━━━━━━━━━
+*Project:* \`${PROJECT_ID}\`
+*Service:* \`${SERVICE_NAME}\`
+*Region:* \`${REGION}\`
+*URL:* \`${SERVICE_URL}\`
+
+[🔗 Xray Link](${SHARE_LINK})
+
+━━━━━━━━━━━━━━━━━━━━
+*Usage:* Click the link above to copy and import to your V2Ray/Xray client."
+
+    CONSOLE_MESSAGE="🚀 Cloud Run ${PROTOCOL} Deployment Successful! ${EMOJI_SUCCESS}
+━━━━━━━━━━━━━━━━━━━━
+Project: ${PROJECT_ID}
+Service: ${SERVICE_NAME}
+Region: ${REGION}
+URL: ${SERVICE_URL}
+
+${SHARE_LINK}
+
+Usage: Copy the above link and import to your V2Ray/Xray client.
+━━━━━━━━━━━━━━━━━━━━"
+    
+    # Save to file
+    echo "$CONSOLE_MESSAGE" > deployment-info.txt
+    log "Deployment info saved to deployment-info.txt"
+    
+    # Display locally
+    echo
+    header "🎉 DEPLOYMENT COMPLETED! 🎉"
+    echo "$CONSOLE_MESSAGE"
+    echo
+    
+    # Send to Telegram
+    send_deployment_notification "$MESSAGE"
+    
+    log "GCP Cloud Run $PROTOCOL Service is now active and ready! ${EMOJI_SUCCESS}"
+}
+
+# Clean up temporary directory
+cleanup() {
+    log "${EMOJI_CLEAN} Cleaning up temporary files..."
+    if [[ -d "GCP-V2RAY-Cloud-Run" ]]; then
+        cd .. || true
+        rm -rf GCP-V2RAY-Cloud-Run
+    fi
+}
+
+# --- Main Flow ---
+show_emojis # Initialize Emojis
+trap cleanup EXIT
 run_user_inputs
-
-# Core Deployment Steps run automatically after auto_deployment_setup completes
-# NOTE: The deploy_to_cloud_run function will use the local Dockerfile and config.json
-# that are copied and modified from the cloned repository.
-clone_and_extract
-prepare_config_files
-deploy_to_cloud_run
-create_project_folder 
-
-info "All done! Check your GCP Console and the local folder for the deployed service details."
-
+deploy_service

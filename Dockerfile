@@ -1,30 +1,18 @@
-# Use a lightweight base image (e.g., Debian or Alpine)
-FROM debian:bullseye-slim
+FROM alpine:latest
 
-# Install necessary packages (if any)
-RUN apt-get update && apt-get install -y \
-    curl \
-    --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache wget unzip
 
-# Download and install Xray (V2ray core)
-# (You should use a known working version)
-ENV XRAY_VERSION 1.8.4
-RUN curl -L -H "Cache-Control: no-cache" -o /tmp/xray.zip "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" && \
-    unzip /tmp/xray.zip -d /usr/local/bin/ xray && \
-    rm -f /tmp/xray.zip
+RUN wget https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip && \
+    unzip -q Xray-linux-64.zip && \
+    mkdir -p /usr/local/share/xray && \
+    mv xray /usr/local/bin/ && \
+    wget https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -O /usr/local/share/xray/geoip.dat && \
+    wget https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat -O /usr/local/share/xray/geosite.dat && \
+    rm Xray-linux-64.zip && \
+    rm -f LICENSE README.md
 
-# Set the working directory
-WORKDIR /usr/local/etc/xray
+RUN chmod +x /usr/local/bin/xray
 
-# Copy the config file from the source to the container
-# The config.json MUST be in the root of your Git repository
-COPY config.json .
+COPY config.json /etc/xray/config.json
 
-# Define the command to run Xray. Cloud Run requires port 8080.
-# The server must listen on the port defined by the PORT environment variable (default 8080)
-# We use '8080' explicitly in the command just in case, but Cloud Run sets the PORT env var.
-CMD ["/usr/local/bin/xray", "-c", "/usr/local/etc/xray/config.json"]
-
-# Expose the default Cloud Run port
-EXPOSE 8080
+CMD ["/usr/local/bin/xray", "-config", "/etc/xray/config.json"]
