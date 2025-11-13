@@ -4,6 +4,7 @@
   },
   "inbounds": [
     {
+      "tag": "vless-ws",
       "port": 8080,
       "protocol": "vless",
       "settings": {
@@ -12,24 +13,83 @@
             "id": "PLACEHOLDER_UUID"
           }
         ],
-        "decryption": "none"
+        "decryption": "none",
+        "fallbacks": []
       },
       "streamSettings": {
         "network": "ws",
+        "security": "none",
         "wsSettings": {
-          "path": "/vless"
+          "path": "PLACEHOLDER_WS_PATH"
         }
       },
       "sniffing": {
         "enabled": true,
-        "destOverride": ["http", "tls"]
+        "destOverride": [
+          "http",
+          "tls"
+        ]
+      }
+    },
+    {
+      "tag": "vless-grpc-ws",
+      "port": 8080,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "PLACEHOLDER_UUID"
+          }
+        ],
+        "decryption": "none",
+        "fallbacks": []
+      },
+      "streamSettings": {
+        "network": "grpc",
+        "security": "none",
+        "grpcSettings": {
+          "serviceName": "PLACEHOLDER_GRPC_SERVICE",
+          "path": "PLACEHOLDER_WS_PATH"
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls"
+        ]
+      }
+    },
+    {
+      "tag": "trojan-ws",
+      "port": 8080,
+      "protocol": "trojan",
+      "settings": {
+        "clients": [
+          {
+            "password": "PLACEHOLDER_PASSWORD"
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "none",
+        "wsSettings": {
+          "path": "PLACEHOLDER_WS_PATH"
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls"
+        ]
       }
     }
   ],
   "outbounds": [
     {
-      "protocol": "freedom",
-      "settings": {}
+      "protocol": "freedom"
     }
   ]
 }
