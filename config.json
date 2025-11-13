@@ -32,7 +32,7 @@
       }
     },
     {
-      "tag": "vless-grpc-ws",
+      "tag": "vless-grpc",
       "port": 8080,
       "protocol": "vless",
       "settings": {
@@ -48,8 +48,7 @@
         "network": "grpc",
         "security": "none",
         "grpcSettings": {
-          "serviceName": "PLACEHOLDER_GRPC_SERVICE",
-          "path": "PLACEHOLDER_WS_PATH"
+          "serviceName": "PLACEHOLDER_GRPC_SERVICE"
         }
       },
       "sniffing": {
