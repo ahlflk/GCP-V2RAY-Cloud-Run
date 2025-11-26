@@ -54,7 +54,18 @@ show_emojis() {
     EMOJI_ERROR="❌"    # Error
     EMOJI_INFO="💡"     # General Information
     EMOJI_SELECT="👉"    # Selection/Input Indicator
-    EMOJI_SPINNER="⏳"  # For spinner
+    EMOJI_SPINNER="⏳"  # For Spinner
+}
+
+# Time Zone Function
+export TZ="Asia/Yangon"
+fmt_dt(){ date -d @"$1" "+%d.%m.%Y %I:%M %p"; }
+
+initialize_time_variables() {
+    START_EPOCH="$(date +%s)"
+    END_EPOCH="$(( START_EPOCH + 5*3600 ))" # 5 hours validity
+    START_LOCAL="$(fmt_dt "$START_EPOCH")"
+    END_LOCAL="$(fmt_dt "$END_EPOCH")"
 }
 
 # Beautiful Header/Banner
@@ -534,22 +545,28 @@ show_config_summary() {
     fi
     
     # Using printf for alignment, ordered as requested
-    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Protocol:"               "$PROTOCOL"
-    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Service Name:"           "$SERVICE_NAME"
-    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Host Domain:"            "$HOST_DOMAIN"
-    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "$auth_label:"            "$auth_value"
-    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "$path_label:"            "$path_value"
+    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Protocol:"       "$PROTOCOL"
+    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Service Name:"       "$SERVICE_NAME"
+    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Host Domain:"       "$HOST_DOMAIN"
+    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "$auth_label:"       "$auth_value"
+    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "$path_label:"       "$path_value"
     
-    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Region:"                 "$REGION"
-    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "CPU/Memory:"             "$CPU core(s) / $MEMORY" # Combined
+    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Region:"       "$REGION"
+    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "CPU/Memory:"       "$CPU core(s) / $MEMORY" # Combined
     
-    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Project ID:"             "$temp_project_id"
+    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Project ID:"       "$temp_project_id"
 
     if [[ "$TELEGRAM_DESTINATION" != "none" ]]; then
         printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Telegram:" "$TELEGRAM_DESTINATION (Token: ${TELEGRAM_BOT_TOKEN:0:8}...)"
     else
         printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Telegram:" "Not configured"
     fi
+    echo
+    
+    # --- TimeFrame Summary ---
+    header "⏳ Deployment TimeFrame (Asia/Yangon)"
+    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Start Time:"       "$START_LOCAL"
+    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "End Time:"     "$END_LOCAL (5 hours)"
     echo
     
     # --- FIXED INPUT LOOP START ---
@@ -666,6 +683,10 @@ create_share_link() {
     DOMAIN="${DOMAIN#https://}"
     DOMAIN="${DOMAIN%/}"
     
+    # Include time in the link title
+    local time_suffix="${START_LOCAL// /_}_${END_LOCAL// /_}"
+    time_suffix="${time_suffix//:/-}"  # Replace : with - for URL safety
+    
     if [[ "$PROTOCOL" == "TROJAN-WS" ]]; then
         UUID_OR_PASSWORD="$PASSWORD"
     else
@@ -676,14 +697,14 @@ create_share_link() {
     case $PROTOCOL in
         "VLESS-WS")
             local PATH_ENCODED=$(echo "$WS_PATH" | sed 's/\//%2F/g')
-            LINK="vless://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?path=${PATH_ENCODED}&security=tls&encryption=none&host=${DOMAIN}&fp=randomized&type=ws&sni=${DOMAIN}#${SERVICE_NAME}_VLESS-WS"
+            LINK="vless://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?path=${PATH_ENCODED}&security=tls&encryption=none&host=${DOMAIN}&fp=randomized&type=ws&sni=${DOMAIN}#${SERVICE_NAME}_VLESS-WS_${time_suffix}"
             ;;
         "VLESS-GRPC")
-            LINK="vless://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?security=tls&encryption=none&host=${DOMAIN}&fp=randomized&type=grpc&serviceName=${GRPC_SERVICE}&sni=${DOMAIN}#${SERVICE_NAME}_VLESS-GRPC"
+            LINK="vless://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?security=tls&encryption=none&host=${DOMAIN}&fp=randomized&type=grpc&serviceName=${GRPC_SERVICE}&sni=${DOMAIN}#${SERVICE_NAME}_VLESS-GRPC_${time_suffix}"
             ;;
         "TROJAN-WS")
             local PATH_ENCODED=$(echo "$WS_PATH" | sed 's/\//%2F/g')
-            LINK="trojan://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?path=${PATH_ENCODED}&security=tls&type=ws&host=${DOMAIN}&fp=randomized&sni=${DOMAIN}#${SERVICE_NAME}_TROJAN-WS"
+            LINK="trojan://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?path=${PATH_ENCODED}&security=tls&type=ws&host=${DOMAIN}&fp=randomized&sni=${DOMAIN}#${SERVICE_NAME}_TROJAN-WS_${time_suffix}"
             ;;
     esac
     
@@ -793,6 +814,10 @@ deploy_to_cloud_run() {
 
 • <b>💻/💾 CPU/Memory:</b> ${CPU} core(s) / ${MEMORY}
 
+• <b>⏰ Start:</b> ${START_LOCAL}
+
+• <b>⌛ End:</b> ${END_LOCAL}
+
 <b>🔗 Share Link:</b>
 
 <code>${share_link}</code>
@@ -848,6 +873,9 @@ CPU/Memory: $CPU core(s) / $MEMORY
 ================================
 Service URL: $service_url
 ================================
+⏰ Start Time: $START_LOCAL
+⌛ End Time: $END_LOCAL
+================================
 Share Link: $share_link
 ================================
 Project ID: $project_id
@@ -871,6 +899,7 @@ show_emojis
 # Run user input functions in specified order
 run_user_inputs() {
     header "🚀 GCP Cloud Run V2Ray Deployment"
+    initialize_time_variables # FIX: Initialize time variables first
     
     # 1. V2Ray Config (Calls all internally in sequence)
     select_v2ray_config

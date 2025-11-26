@@ -54,7 +54,18 @@ show_emojis() {
     EMOJI_ERROR="❌"    # Error
     EMOJI_INFO="💡"     # General Information
     EMOJI_SELECT="👉"    # Selection/Input Indicator
-    EMOJI_SPINNER="⏳"  # For spinner
+    EMOJI_SPINNER="⏳"  # For Spinner
+}
+
+# Time Zone Function
+export TZ="Asia/Yangon"
+fmt_dt(){ date -d @"$1" "+%d.%m.%Y %I:%M %p"; }
+
+initialize_time_variables() {
+    START_EPOCH="$(date +%s)"
+    END_EPOCH="$(( START_EPOCH + 5*3600 ))" # 5 hours validity
+    START_LOCAL="$(fmt_dt "$START_EPOCH")"
+    END_LOCAL="$(fmt_dt "$END_EPOCH")"
 }
 
 # Beautiful Header/Banner
@@ -534,22 +545,28 @@ show_config_summary() {
     fi
     
     # Using printf for alignment, ordered as requested
-    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Protocol:"               "$PROTOCOL"
-    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Service Name:"           "$SERVICE_NAME"
-    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Host Domain:"            "$HOST_DOMAIN"
-    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "$auth_label:"            "$auth_value"
-    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "$path_label:"            "$path_value"
+    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Protocol:"       "$PROTOCOL"
+    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Service Name:"       "$SERVICE_NAME"
+    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Host Domain:"       "$HOST_DOMAIN"
+    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "$auth_label:"       "$auth_value"
+    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "$path_label:"       "$path_value"
     
-    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Region:"                 "$REGION"
-    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "CPU/Memory:"             "$CPU core(s) / $MEMORY" # Combined
+    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Region:"       "$REGION"
+    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "CPU/Memory:"       "$CPU core(s) / $MEMORY" # Combined
     
-    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Project ID:"             "$temp_project_id"
+    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Project ID:"       "$temp_project_id"
 
     if [[ "$TELEGRAM_DESTINATION" != "none" ]]; then
         printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Telegram:" "$TELEGRAM_DESTINATION (Token: ${TELEGRAM_BOT_TOKEN:0:8}...)"
     else
         printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Telegram:" "Not configured"
     fi
+    echo
+    
+    # --- TimeFrame Summary ---
+    header "⏳ Deployment TimeFrame (Asia/Yangon)"
+    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "Start Time:"       "$START_LOCAL"
+    printf "${CYAN}${BOLD}%-20s${NC} %s\n" "End Time:"     "$END_LOCAL (5 hours)"
     echo
     
     # --- FIXED INPUT LOOP START ---
@@ -666,6 +683,10 @@ create_share_link() {
     DOMAIN="${DOMAIN#https://}"
     DOMAIN="${DOMAIN%/}"
     
+    # Include time in the link title
+    local time_suffix="${START_LOCAL// /_}_${END_LOCAL// /_}"
+    time_suffix="${time_suffix//:/-}"  # Replace : with - for URL safety
+    
     if [[ "$PROTOCOL" == "TROJAN-WS" ]]; then
         UUID_OR_PASSWORD="$PASSWORD"
     else
@@ -676,14 +697,14 @@ create_share_link() {
     case $PROTOCOL in
         "VLESS-WS")
             local PATH_ENCODED=$(echo "$WS_PATH" | sed 's/\//%2F/g')
-            LINK="vless://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?path=${PATH_ENCODED}&security=tls&encryption=none&host=${DOMAIN}&fp=randomized&type=ws&sni=${DOMAIN}#${SERVICE_NAME}_VLESS-WS"
+            LINK="vless://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?path=${PATH_ENCODED}&security=tls&encryption=none&host=${DOMAIN}&fp=randomized&type=ws&sni=${DOMAIN}#${SERVICE_NAME}_VLESS-WS_${time_suffix}"
             ;;
         "VLESS-GRPC")
-            LINK="vless://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?security=tls&encryption=none&host=${DOMAIN}&fp=randomized&type=grpc&serviceName=${GRPC_SERVICE}&sni=${DOMAIN}#${SERVICE_NAME}_VLESS-GRPC"
+            LINK="vless://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?security=tls&encryption=none&host=${DOMAIN}&fp=randomized&type=grpc&serviceName=${GRPC_SERVICE}&sni=${DOMAIN}#${SERVICE_NAME}_VLESS-GRPC_${time_suffix}"
             ;;
         "TROJAN-WS")
             local PATH_ENCODED=$(echo "$WS_PATH" | sed 's/\//%2F/g')
-            LINK="trojan://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?path=${PATH_ENCODED}&security=tls&type=ws&host=${DOMAIN}&fp=randomized&sni=${DOMAIN}#${SERVICE_NAME}_TROJAN-WS"
+            LINK="trojan://${UUID_OR_PASSWORD}@${HOST_DOMAIN}:443?path=${PATH_ENCODED}&security=tls&type=ws&host=${DOMAIN}&fp=randomized&sni=${DOMAIN}#${SERVICE_NAME}_TROJAN-WS_${time_suffix}"
             ;;
     esac
     
@@ -751,29 +772,6 @@ deploy_to_cloud_run() {
     selected_info "Service URL: $service_url"
     selected_info "Share Link: $share_link"
 
-    # Determine auth label and path/service label for Telegram message
-    local auth_label
-    local auth_value
-    local path_label
-    local path_value
-    
-    if [[ "$PROTOCOL" == "TROJAN-WS" ]]; then
-        auth_label="Password"
-        auth_value="$PASSWORD"
-        path_label="WS Path"
-        path_value="$WS_PATH"
-    elif [[ "$PROTOCOL" == "VLESS-GRPC" ]]; then
-        auth_label="UUID"
-        auth_value="$UUID"
-        path_label="gRPC Service"
-        path_value="$GRPC_SERVICE"
-    else # VLESS-WS
-        auth_label="UUID"
-        auth_value="$UUID"
-        path_label="WS Path"
-        path_value="$WS_PATH"
-    fi
-
     # Telegram Message structure (HTML format, VLESS in <code> for easy copy, no "Copy Code" text)
     local telegram_message="🚀 <b>GCP V2Ray Deployment Complete!</b>
 
@@ -781,23 +779,17 @@ deploy_to_cloud_run() {
 
 • <b>🔌 Protocol:</b> ${PROTOCOL}
 
-• <b>⚙️ Service:</b> ${SERVICE_NAME}
-
-• <b>🌐 Host Domain:</b> ${HOST_DOMAIN}
-
-• <b>🆔 ${auth_label}:</b> ${auth_value}
-
-• <b>📂 ${path_label}:</b> ${path_value}
-
 • <b>🗺️ Region:</b> ${REGION}
 
 • <b>💻/💾 CPU/Memory:</b> ${CPU} core(s) / ${MEMORY}
 
+• <b>⏰ Start:</b> ${START_LOCAL}
+
+• <b>⌛ End:</b> ${END_LOCAL}
+
 <b>🔗 Share Link:</b>
 
-<code>${share_link}</code>
-
-For more details, check GCP Console: <a href=\"https://console.cloud.google.com/run?project=${project_id}\">GCP Console</a>"
+<code>${share_link}</code>"
     
     send_deployment_notification "$telegram_message"
 }
@@ -814,46 +806,22 @@ create_project_folder() {
     mv Dockerfile GCP-V2RAY-Cloud-Run/ > /dev/null 2>&1
     mv config.json GCP-V2RAY-Cloud-Run/ > /dev/null 2>&1
     
-    # Determine auth label and path/service line for the file output
-    local auth_label
-    local auth_value
-    local path_or_service_line=""
-
-    if [[ "$PROTOCOL" == "TROJAN-WS" ]]; then
-        auth_label="Password"
-        auth_value="$PASSWORD"
-        path_or_service_line="WS Path: $WS_PATH"
-    elif [[ "$PROTOCOL" == "VLESS-GRPC" ]]; then
-        auth_label="UUID"
-        auth_value="$UUID"
-        path_or_service_line="gRPC Service: $GRPC_SERVICE"
-    else # VLESS-WS
-        auth_label="UUID"
-        auth_value="$UUID"
-        path_or_service_line="WS Path: $WS_PATH"
-    fi
-    
     # EOF block content is now ordered as requested, and the blank line is fixed.
     cat > GCP-V2RAY-Cloud-Run/deployment-info.txt << EOF
 ================================
 GCP V2Ray Cloud Run Deployment Info
 ================================
 Protocol: $PROTOCOL
-Service Name: $SERVICE_NAME
-Host Domain: $HOST_DOMAIN
-$auth_label: $auth_value
-$path_or_service_line
 Region: $REGION
 CPU/Memory: $CPU core(s) / $MEMORY
 ================================
-Service URL: $service_url
+⏰ Start Time: $START_LOCAL
+⌛ End Time: $END_LOCAL
 ================================
 Share Link: $share_link
 ================================
 Project ID: $project_id
 Deployment Date: $(date)
-================================
-For more details, check GCP Console: https://console.cloud.google.com/run?project=$project_id
 ================================
 EOF
     
@@ -871,6 +839,7 @@ show_emojis
 # Run user input functions in specified order
 run_user_inputs() {
     header "🚀 GCP Cloud Run V2Ray Deployment"
+    initialize_time_variables # FIX: Initialize time variables first
     
     # 1. V2Ray Config (Calls all internally in sequence)
     select_v2ray_config
