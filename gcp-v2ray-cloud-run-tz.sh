@@ -8,17 +8,17 @@ set -euo pipefail
 # 1. GLOBAL VARIABLES & STYLES
 # ------------------------------------------------------------------------------
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[1;32m'
-LIGHT_GREEN='\033[1;92m'
-YELLOW='\033[1;33m'
-ORANGE='\033[0;33m' # Header Color
-BLUE='\033[1;34m'
-CYAN='\033[1;36m'
-WHITE='\033[1;37m'
+# ANSI Color Codes
+BLUE='\033[94m'
 BOLD='\033[1m'
+CYAN='\033[96m'
+GREEN='\033[92m'
+LIGHT_GREEN='\033[1;92m'
 NC='\033[0m' # No Color
+ORANGE='\033[38;5;208m' # Header Color
+RED='\033[91m'
+WHITE='\033[1;37m'
+YELLOW='\033[93m'
 
 # Global Configuration Variables (Defaults)
 PROTOCOL="VLESS-WS"
@@ -772,57 +772,24 @@ deploy_to_cloud_run() {
     selected_info "Service URL: $service_url"
     selected_info "Share Link: $share_link"
 
-    # Determine auth label and path/service label for Telegram message
-    local auth_label
-    local auth_value
-    local path_label
-    local path_value
-    
-    if [[ "$PROTOCOL" == "TROJAN-WS" ]]; then
-        auth_label="Password"
-        auth_value="$PASSWORD"
-        path_label="WS Path"
-        path_value="$WS_PATH"
-    elif [[ "$PROTOCOL" == "VLESS-GRPC" ]]; then
-        auth_label="UUID"
-        auth_value="$UUID"
-        path_label="gRPC Service"
-        path_value="$GRPC_SERVICE"
-    else # VLESS-WS
-        auth_label="UUID"
-        auth_value="$UUID"
-        path_label="WS Path"
-        path_value="$WS_PATH"
-    fi
-
     # Telegram Message structure (HTML format, VLESS in <code> for easy copy, no "Copy Code" text)
     local telegram_message="🚀 <b>GCP V2Ray Deployment Complete!</b>
 
 📋 <b>Details:</b>
 
-• <b>🔌 Protocol:</b> ${PROTOCOL}
-
-• <b>⚙️ Service:</b> ${SERVICE_NAME}
-
-• <b>🌐 Host Domain:</b> ${HOST_DOMAIN}
-
-• <b>🆔 ${auth_label}:</b> ${auth_value}
-
-• <b>📂 ${path_label}:</b> ${path_value}
+• <blockquote><b>🔌 Protocol:</b> ${PROTOCOL}
 
 • <b>🗺️ Region:</b> ${REGION}
 
-• <b>💻/💾 CPU/Memory:</b> ${CPU} core(s) / ${MEMORY}
+• <b>💻/💾 CPU/Memory:</b> ${CPU} core(s) / ${MEMORY}</blockquote>
 
-• <b>⏰ Start:</b> ${START_LOCAL}
+• <blockquote><b>⏰ Start:</b> ${START_LOCAL}
 
-• <b>⌛ End:</b> ${END_LOCAL}
+• <b>⌛ End:</b> ${END_LOCAL}</blockquote>
 
 <b>🔗 Share Link:</b>
 
-<code>${share_link}</code>
-
-For more details, check GCP Console: <a href=\"https://console.cloud.google.com/run?project=${project_id}\">GCP Console</a>"
+<pre><code>${share_link}</code></pre>"
     
     send_deployment_notification "$telegram_message"
 }
@@ -839,50 +806,23 @@ create_project_folder() {
     mv Dockerfile GCP-V2RAY-Cloud-Run/ > /dev/null 2>&1
     mv config.json GCP-V2RAY-Cloud-Run/ > /dev/null 2>&1
     
-    # Determine auth label and path/service line for the file output
-    local auth_label
-    local auth_value
-    local path_or_service_line=""
-
-    if [[ "$PROTOCOL" == "TROJAN-WS" ]]; then
-        auth_label="Password"
-        auth_value="$PASSWORD"
-        path_or_service_line="WS Path: $WS_PATH"
-    elif [[ "$PROTOCOL" == "VLESS-GRPC" ]]; then
-        auth_label="UUID"
-        auth_value="$UUID"
-        path_or_service_line="gRPC Service: $GRPC_SERVICE"
-    else # VLESS-WS
-        auth_label="UUID"
-        auth_value="$UUID"
-        path_or_service_line="WS Path: $WS_PATH"
-    fi
-    
     # EOF block content is now ordered as requested, and the blank line is fixed.
     cat > GCP-V2RAY-Cloud-Run/deployment-info.txt << EOF
-================================
+==============================
 GCP V2Ray Cloud Run Deployment Info
-================================
+==============================
 Protocol: $PROTOCOL
-Service Name: $SERVICE_NAME
-Host Domain: $HOST_DOMAIN
-$auth_label: $auth_value
-$path_or_service_line
 Region: $REGION
 CPU/Memory: $CPU core(s) / $MEMORY
-================================
-Service URL: $service_url
-================================
+==============================
 ⏰ Start Time: $START_LOCAL
 ⌛ End Time: $END_LOCAL
-================================
+==============================
 Share Link: $share_link
-================================
+==============================
 Project ID: $project_id
 Deployment Date: $(date)
-================================
-For more details, check GCP Console: https://console.cloud.google.com/run?project=$project_id
-================================
+==============================
 EOF
     
     log "Project files and info saved successfully in: GCP-V2RAY-Cloud-Run/ 📁"
