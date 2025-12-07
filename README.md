@@ -56,4 +56,3 @@ Run this script directly in **Google Cloud Shell**:
 
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/ahlflk/GCP-V2RAY-Cloud-Run/refs/heads/main/gcp-v2ray-cloud-run.sh)
-
