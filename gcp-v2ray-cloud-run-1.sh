@@ -24,8 +24,8 @@ YELLOW='\033[93m'
 PROTOCOL="VLESS-WS"
 UUID=""
 PASSWORD=""
-WS_PATH="/t.me/AHLFLK2025channel"
-GRPC_SERVICE="AHLFLK2025"
+WS_PATH="/t.me/ahlflk2025channel"
+GRPC_SERVICE="ahlflk2025"
 REGION="us-central1"
 CPU="2"
 MEMORY="2Gi"
@@ -275,7 +275,7 @@ select_uuid() {
 select_ws_path() {
     header "📂 WS Path Configuration"
     
-    local default_path="/t.me/AHLFLK2025channel"
+    local default_path="/t.me/ahlflk2025channel"
     echo -e "${CYAN}WS Path (Default: $default_path):${NC}"
     
     read -p "Enter custom WS Path or press Enter to use default: " custom_path
@@ -289,7 +289,7 @@ select_ws_path() {
 select_grpc_service() {
     header "⚙️ gRPC Service Name Configuration"
     
-    local default_service="AHLFLK2025"
+    local default_service="ahlflk2025"
     echo -e "${CYAN}gRPC Service Name (Default: $default_service):${NC}"
     
     read -p "Enter custom gRPC Service Name or press Enter to use default: " custom_service
@@ -303,11 +303,11 @@ select_grpc_service() {
 select_password() {
     header "🆔 Trojan Password Configuration"
     
-    local default_password="AHLFLK2025"
+    local default_password="ahlflk2025"
         
     while true; do
         echo -e "${CYAN}Password Options:${NC}"
-        echo -e "${BOLD}1.${NC} Use Default Password (AHLFLK2025) ${GREEN}[DEFAULT]${NC}"
+        echo -e "${BOLD}1.${NC} Use Default Password (ahlflk2025) ${GREEN}[DEFAULT]${NC}"
         echo -e "${CYAN}You can also paste a custom password directly, or press Enter for default.${NC}"
         echo
 
